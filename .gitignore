@@ -1,42 +1,39 @@
-# IDE
+# IDE & editor
 .idea/
 *.iml
 
+# Build artifacts
+build/
+dist/
+redvox.egg-info/
+
 # Python
-__pycache__/
 *.pyc
-*.pyo
-*.pyd
+__pycache__/
 .mypy_cache
 .coverage
 htmlcov/
 
-# Build / packaging
-build/
-dist/
-*.egg-info/
-
-# Virtual environments
+# Virtual environment
 .venv/
 .venv312/
 
-# Local/system
-.config/
+# Local skills / personal configs
 .local/
+.config/
 
-# Logs
-*.log
-
-# Media / generated content (CRITICAL)
+# Media and session data
 redvox_gui/media/
 redvox_gui/sessions/
 
-# Large / binary data (CRITICAL)
-*.wav
-*.rdvxz
-*.rdvxm
+# Docs / configs
+*.toml
+*.ini
+
+# Images / temporary files
+*.jpg
+*.jpeg
 
 # Misc
 *.orig
-*.jpg
-*.jpeg
+.replit
