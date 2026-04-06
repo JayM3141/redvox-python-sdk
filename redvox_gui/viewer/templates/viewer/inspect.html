@@ -1,0 +1,142 @@
+{% extends 'viewer/base.html' %}
+{% block title %}File Inspector — RedVox SDK GUI{% endblock %}
+{% block nav_inspect %}active{% endblock %}
+{% block sdk_version %}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h3 class="fw-bold mb-0"><i class="bi bi-search me-2 text-danger"></i>File Inspector</h3>
+    <p class="text-muted mb-0">Upload a RedVox data file to inspect its contents and metadata.</p>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header bg-dark text-white">Upload File</div>
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data" id="inspectForm">
+                    {% csrf_token %}
+                    <div class="upload-zone mb-3" onclick="document.getElementById('fileInput').click()">
+                        <i class="bi bi-cloud-upload fs-2 text-muted"></i>
+                        <p class="mb-1 mt-2 fw-semibold">Click to select file</p>
+                        <p class="text-muted small mb-0">Supports .rdvxz, .rdvxm, .json</p>
+                        <p id="fileName" class="text-danger small mt-1 mb-0"></p>
+                    </div>
+                    <input type="file" id="fileInput" name="file" accept=".rdvxz,.rdvxm,.json" class="d-none" onchange="updateFileName(this)">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-search me-2"></i>Inspect File
+                    </button>
+                </form>
+
+                <div class="mt-4">
+                    <div class="small text-muted fw-bold mb-2">SUPPORTED FORMATS</div>
+                    <div class="d-flex flex-column gap-1">
+                        <span class="badge bg-primary text-start">.rdvxz — API 900 (legacy)</span>
+                        <span class="badge text-start" style="background:#7c3aed">.rdvxm — API 1000/M (modern)</span>
+                        <span class="badge bg-success text-start">.json — Exported JSON data</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-8">
+        {% if error %}
+        <div class="alert alert-danger">
+            <h6 class="alert-heading"><i class="bi bi-exclamation-triangle me-2"></i>Error</h6>
+            <p class="mb-0">{{ error }}</p>
+            {% if traceback %}
+            <hr>
+            <pre class="mb-0 small">{{ traceback }}</pre>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if result %}
+        <div class="card mb-3">
+            <div class="card-header d-flex align-items-center justify-content-between"
+                 style="{% if 'API 900' in result.type %}background:#1d4ed8;color:#fff{% elif 'API 1000' in result.type %}background:#7c3aed;color:#fff{% else %}background:#064e3b;color:#fff{% endif %}">
+                <span><i class="bi bi-file-earmark-binary me-2"></i>{{ filename }}</span>
+                <span class="badge bg-white bg-opacity-25">{{ result.type }}</span>
+            </div>
+            <div class="card-body">
+                {% if result.json_preview %}
+                    <div class="mb-2 d-flex justify-content-between align-items-center">
+                        <strong>JSON Content</strong>
+                        {% if result.truncated %}<span class="badge bg-warning text-dark">Truncated at 5000 chars</span>{% endif %}
+                    </div>
+                    <pre>{{ result.json_preview }}</pre>
+                {% elif result.summary %}
+                    <div class="alert alert-warning mb-0">{{ result.summary }}</div>
+                {% elif result.fields %}
+                    <div class="row g-2 mb-3">
+                        {% for key, val in result.fields %}
+                        <div class="col-sm-6">
+                            <div class="small text-muted text-uppercase" style="font-size:0.7rem;letter-spacing:0.5px;">{{ key }}</div>
+                            <div class="small fw-semibold text-break">{{ val|default:"—" }}</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% if result.sensors %}
+                    <hr class="my-2">
+                    <div class="small text-muted mb-1">Sensors Detected</div>
+                    <div class="d-flex flex-wrap gap-1">
+                        {% for s in result.sensors %}
+                        <span class="badge bg-success sensor-badge">{{ s }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                {% else %}
+                    <p class="text-muted mb-3">Found <strong>{{ result.packet_count }}</strong> packet(s)</p>
+                    {% for pkt in result.details %}
+                    <div class="card mb-3 border">
+                        <div class="card-header bg-light d-flex justify-content-between">
+                            <strong>Packet {{ forloop.counter }}</strong>
+                            <span class="text-muted small">{{ result.type }}</span>
+                        </div>
+                        <div class="card-body p-3">
+                            <div class="row g-2">
+                                {% for key, val in pkt.items %}
+                                {% if key != 'sensors' %}
+                                <div class="col-sm-6">
+                                    <div class="small text-muted text-uppercase" style="font-size:0.7rem;letter-spacing:0.5px;">{{ key|title }}</div>
+                                    <div class="small fw-semibold text-break">{{ val|default:"—" }}</div>
+                                </div>
+                                {% endif %}
+                                {% endfor %}
+                            </div>
+                            {% if pkt.sensors %}
+                            <hr class="my-2">
+                            <div class="small text-muted mb-1">Sensors Detected</div>
+                            <div class="d-flex flex-wrap gap-1">
+                                {% for s in pkt.sensors %}
+                                <span class="badge bg-success sensor-badge">{{ s }}</span>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if not result and not error %}
+        <div class="card border-dashed text-center p-5">
+            <i class="bi bi-inbox fs-1 text-muted"></i>
+            <p class="text-muted mt-3">No file loaded yet. Upload a file on the left to inspect it.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function updateFileName(input) {
+    const el = document.getElementById('fileName');
+    el.textContent = input.files[0] ? input.files[0].name : '';
+}
+</script>
+{% endblock %}

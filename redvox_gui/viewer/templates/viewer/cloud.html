@@ -1,0 +1,206 @@
+{% extends 'viewer/base.html' %}
+{% block title %}Cloud Connect — RedVox SDK GUI{% endblock %}
+{% block nav_cloud %}active{% endblock %}
+{% block nav_version %}{% endblock %}
+{% block sdk_version %}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h3 class="fw-bold mb-0"><i class="bi bi-cloud me-2 text-danger"></i>RedVox Cloud Connect</h3>
+    <p class="text-muted mb-0 small">Authenticate with the RedVox cloud API to access station data and metadata.</p>
+</div>
+
+{% if success %}
+<div class="alert alert-success alert-dismissible fade show">
+    <i class="bi bi-check-circle me-2"></i>{{ success }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+{% if error %}
+<div class="alert alert-danger alert-dismissible fade show">
+    <i class="bi bi-exclamation-triangle me-2"></i>{{ error }}
+    {% if traceback %}<hr><pre class="mb-0 small">{{ traceback }}</pre>{% endif %}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="row g-3">
+    <div class="col-lg-4">
+        {% if not auth_token %}
+        <div class="card">
+            <div class="card-header bg-dark text-white"><i class="bi bi-lock me-2"></i>Login to RedVox Cloud</div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="login">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold small">Email / Username</label>
+                        <input type="text" name="username" class="form-control form-control-sm"
+                               placeholder="your@email.com" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold small">Password</label>
+                        <input type="password" name="password" class="form-control form-control-sm" required>
+                    </div>
+                    <hr class="my-2">
+                    <div class="mb-2">
+                        <label class="form-label fw-semibold small">Server Host</label>
+                        <input type="text" name="host" class="form-control form-control-sm" value="redvox.io">
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-7">
+                            <label class="form-label fw-semibold small">Protocol</label>
+                            <select name="protocol" class="form-select form-select-sm">
+                                <option value="https" selected>HTTPS</option>
+                                <option value="http">HTTP</option>
+                            </select>
+                        </div>
+                        <div class="col-5">
+                            <label class="form-label fw-semibold small">Port</label>
+                            <input type="number" name="port" class="form-control form-control-sm" value="8080">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-box-arrow-in-right me-2"></i>Connect
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-body">
+                <h6 class="fw-bold small mb-2"><i class="bi bi-info-circle me-2 text-primary"></i>About RedVox Cloud</h6>
+                <ul class="small text-muted ps-3 mb-0">
+                    <li>Requires a RedVox account at <a href="https://redvox.io" target="_blank">redvox.io</a></li>
+                    <li>Authentication uses email/password via the RedVox API</li>
+                    <li>Default server: <code>redvox.io:8080</code></li>
+                    <li>Supports metadata queries, station stats, and data download</li>
+                </ul>
+            </div>
+        </div>
+        {% else %}
+        <div class="card border-success">
+            <div class="card-header bg-success text-white"><i class="bi bi-cloud-check me-2"></i>Connected</div>
+            <div class="card-body">
+                <p class="small mb-1"><strong>User:</strong> {{ username }}</p>
+                <p class="small mb-1"><strong>Host:</strong> {{ host }}</p>
+                <p class="small mb-2"><strong>Token:</strong>
+                    <code style="font-size:0.7rem">{{ auth_token|slice:":40" }}…</code>
+                </p>
+                <div class="d-flex gap-2 flex-column">
+                    <form method="post" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="validate_token">
+                        <button class="btn btn-sm btn-outline-success w-100">
+                            <i class="bi bi-patch-check me-1"></i>Validate Token
+                        </button>
+                    </form>
+                    <form method="post" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="station_stats">
+                        <div class="mb-2">
+                            <label class="form-label fw-semibold small mb-1">Station IDs</label>
+                            <input type="text" name="station_ids" class="form-control form-control-sm"
+                                   placeholder="e.g. 1637681016 1637620010">
+                            <div class="form-text">Space or comma separated.</div>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <label class="form-label fw-semibold small mb-1">Start (epoch seconds)</label>
+                                <input type="number" name="start_ts_s" class="form-control form-control-sm"
+                                       placeholder="optional">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label fw-semibold small mb-1">End (epoch seconds)</label>
+                                <input type="number" name="end_ts_s" class="form-control form-control-sm"
+                                       placeholder="optional">
+                            </div>
+                        </div>
+                        <button class="btn btn-sm btn-outline-primary w-100">
+                            <i class="bi bi-broadcast me-1"></i>Get Station Stats
+                        </button>
+                    </form>
+                    <form method="post" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="logout">
+                        <button class="btn btn-sm btn-outline-danger w-100">
+                            <i class="bi bi-box-arrow-right me-1"></i>Disconnect
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-lg-8">
+        {% if station_stats_text %}
+        <div class="card mb-3">
+            <div class="card-header bg-dark text-white"><i class="bi bi-broadcast me-2"></i>Station Stats</div>
+            <div class="card-body">
+                <pre>{{ station_stats_text }}</pre>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="card">
+            <div class="card-header bg-dark text-white"><i class="bi bi-book me-2"></i>Cloud API Reference</div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr><th>Method</th><th>Description</th></tr>
+                    </thead>
+                    <tbody class="small">
+                        <tr><td><code>authenticate_user</code></td><td>Log in with email and password, receive auth token</td></tr>
+                        <tr><td><code>validate_own_auth_token</code></td><td>Check if your current token is still valid</td></tr>
+                        <tr><td><code>refresh_own_auth_token</code></td><td>Refresh an expiring auth token</td></tr>
+                        <tr><td><code>health_check</code></td><td>Verify server is reachable and operational</td></tr>
+                        <tr><td><code>request_station_stats</code></td><td>Get statistics for all accessible stations</td></tr>
+                        <tr><td><code>request_station_statuses</code></td><td>Get status of accessible stations</td></tr>
+                        <tr><td><code>request_metadata</code></td><td>Request metadata for API 900 data</td></tr>
+                        <tr><td><code>request_metadata_m</code></td><td>Request metadata for API 1000/M data</td></tr>
+                        <tr><td><code>request_data_range</code></td><td>Request data for a time range and station list</td></tr>
+                        <tr><td><code>request_timing_metadata</code></td><td>Request timing/synchronization metadata</td></tr>
+                        <tr><td><code>request_session_model</code></td><td>Get session model for a station</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header bg-dark text-white"><i class="bi bi-code-slash me-2"></i>Python SDK Usage</div>
+            <div class="card-body">
+                <pre style="max-height:250px">from redvox.cloud.config import RedVoxConfig
+from redvox.cloud.client import CloudClient
+
+# Connect to RedVox cloud
+config = RedVoxConfig(
+    username="your@email.com",
+    password="your_password",
+    protocol="https",
+    host="redvox.io",
+    port=8080,
+)
+client = CloudClient(config)
+
+# Authenticate
+auth = client.authenticate_user("your@email.com", "your_password")
+if auth.is_success():
+    print(f"Token: {auth.auth_token}")
+
+# Request station stats
+start_ts_s = 1608508800
+end_ts_s = 1608512400
+station_ids = ["1637681016"]
+stats = client.request_station_stats(start_ts_s, end_ts_s, station_ids)
+
+# Request data range (for time-based queries)
+# See redvox.cloud.data_client for DataRangeReq usage
+
+client.close()</pre>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

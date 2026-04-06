@@ -1,0 +1,137 @@
+{% extends 'viewer/base.html' %}
+{% block title %}CLI Runner — RedVox SDK GUI{% endblock %}
+{% block nav_cli %}active{% endblock %}
+{% block sdk_version %}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h3 class="fw-bold mb-0"><i class="bi bi-terminal me-2 text-danger"></i>CLI Runner</h3>
+    <p class="text-muted mb-0">Run <code>redvox-cli</code> commands directly from the browser.</p>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header bg-dark text-white">Run Command</div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Command</label>
+                        <select name="command" id="cmdSelect" class="form-select"
+                                onchange="document.getElementById('cmdPreview').textContent = 'redvox-cli ' + this.value">
+                            <option value="--help">--help (show help)</option>
+                            {% for c in commands %}
+                            <option value="{{ c.cmd }} --help">{{ c.cmd }} — {{ c.desc }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Extra Arguments <span class="text-muted small fw-normal">(optional)</span></label>
+                        <input type="text" name="args" class="form-control font-monospace"
+                               placeholder="e.g. --verbose"
+                               onkeyup="updatePreview()">
+                        <div class="form-text">File paths will not work without server-side file access.</div>
+                    </div>
+                    <div class="bg-dark text-success rounded p-2 font-monospace small mb-3" id="cmdPreview">
+                        redvox-cli --help
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-play-fill me-2"></i>Run Command
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header bg-dark text-white">Available Commands</div>
+            <div class="card-body p-0">
+                <div class="list-group list-group-flush">
+                    {% for c in commands %}
+                    <button type="button" class="list-group-item list-group-item-action small py-2"
+                            onclick="selectCommand('{{ c.cmd }}')">
+                        <code class="text-danger">{{ c.cmd }}</code>
+                        <br><span class="text-muted" style="font-size:0.75rem;">{{ c.desc }}</span>
+                    </button>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-8">
+        {% if ran_cmd %}
+        <div class="card mb-3">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-terminal me-2"></i>Output</span>
+                <span class="badge {% if returncode == 0 %}bg-success{% else %}bg-danger{% endif %}">
+                    Exit {{ returncode }}
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="bg-dark text-success rounded p-2 font-monospace small mb-3">
+                    $ {{ ran_cmd }}
+                </div>
+                {% if stdout %}
+                <div class="small text-muted fw-bold mb-1">STDOUT</div>
+                <pre>{{ stdout }}</pre>
+                {% endif %}
+                {% if stderr %}
+                <div class="small text-muted fw-bold mb-1">STDERR</div>
+                <pre class="border border-warning">{{ stderr }}</pre>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if error %}
+        <div class="alert alert-danger">
+            <strong>Error:</strong> {{ error }}
+        </div>
+        {% endif %}
+
+        {% if not ran_cmd and not error %}
+        <div class="card">
+            <div class="card-header bg-dark text-white">redvox-cli Reference</div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr><th>Command</th><th>Description</th></tr>
+                    </thead>
+                    <tbody class="small">
+                        {% for c in commands %}
+                        <tr>
+                            <td><code class="text-danger">{{ c.cmd }}</code></td>
+                            <td class="text-muted">{{ c.desc }}</td>
+                        </tr>
+                        {% endfor %}
+                        <tr><td><code class="text-danger">print-z</code></td><td class="text-muted">Print .rdvxz file contents</td></tr>
+                        <tr><td><code class="text-danger">print-m</code></td><td class="text-muted">Print .rdvxm file contents</td></tr>
+                        <tr><td><code class="text-danger">cloud-download</code></td><td class="text-muted">Download data from RedVox cloud</td></tr>
+                        <tr><td><code class="text-danger">data-req</code></td><td class="text-muted">Request data from server</td></tr>
+                        <tr><td><code class="text-danger">data-req-report</code></td><td class="text-muted">Generate a data request report</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function selectCommand(cmd) {
+    const sel = document.getElementById('cmdSelect');
+    for (let opt of sel.options) {
+        if (opt.value.startsWith(cmd)) { sel.value = opt.value; break; }
+    }
+    updatePreview();
+}
+function updatePreview() {
+    const cmd = document.getElementById('cmdSelect').value;
+    const args = document.querySelector('input[name=args]').value;
+    document.getElementById('cmdPreview').textContent = 'redvox-cli ' + cmd + (args ? ' ' + args : '');
+}
+</script>
+{% endblock %}

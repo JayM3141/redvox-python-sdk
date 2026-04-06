@@ -1,0 +1,5 @@
+cd "c:\1-My-Data-Centre\Replit\Redvox-Python-SDK\redvox-python-sdk"
+
+.\.venv312\Scripts\Activate.ps1
+
+..\.\.venv312\Scripts\python.exe manage.py runserver 127.0.0.1:5000

@@ -1,0 +1,148 @@
+{% extends 'viewer/base.html' %}
+{% block title %}Signal Analysis — RedVox SDK GUI{% endblock %}
+{% block nav_analysis %}active{% endblock %}
+{% block nav_version %}{% endblock %}
+{% block sdk_version %}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h3 class="fw-bold mb-0"><i class="bi bi-graph-up me-2 text-danger"></i>Signal Analysis</h3>
+    <p class="text-muted mb-0 small">Upload a RedVox file to generate waveform, FFT spectrum, and spectrogram plots.</p>
+</div>
+
+<div class="row g-3">
+    <div class="col-lg-3">
+        <div class="card">
+            <div class="card-header bg-dark text-white">Upload File</div>
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="upload-zone mb-3" onclick="document.getElementById('analysisFile').click()">
+                        <i class="bi bi-graph-up fs-2 text-muted"></i>
+                        <p class="fw-semibold mt-2 mb-1 small">Click to select file</p>
+                        <p class="text-muted mb-0" style="font-size:0.75rem">.rdvxz or .rdvxm</p>
+                        <p id="aFileName" class="text-danger small mt-1 mb-0"></p>
+                    </div>
+                    <input type="file" id="analysisFile" name="file" accept=".rdvxz,.rdvxm" class="d-none"
+                           onchange="document.getElementById('aFileName').textContent = this.files[0]?.name || ''">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-bar-chart me-2"></i>Analyze
+                    </button>
+                </form>
+
+                <div class="mt-3">
+                    <div class="small text-muted fw-bold mb-1">ANALYSIS INCLUDES</div>
+                    <ul class="small text-muted ps-3 mb-0">
+                        <li>Waveform plot</li>
+                        <li>FFT frequency spectrum</li>
+                        <li>Spectrogram (time-frequency)</li>
+                        <li>Statistical summary</li>
+                        <li>Peak frequency detection</li>
+                    </ul>
+                </div>
+
+                <div class="mt-3">
+                    <div class="small text-muted fw-bold mb-1">TRY A SAMPLE</div>
+                    <a href="{% url 'samples' %}" class="btn btn-sm btn-outline-danger w-100">
+                        <i class="bi bi-folder2-open me-1"></i>Browse Samples
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-9">
+        {% if error %}
+        <div class="alert alert-danger">
+            <h6 class="alert-heading"><i class="bi bi-exclamation-triangle me-2"></i>Error</h6>
+            <p class="mb-0">{{ error }}</p>
+            {% if traceback %}<hr><pre class="mb-0 small">{{ traceback }}</pre>{% endif %}
+        </div>
+        {% endif %}
+
+        {% if warning %}
+        <div class="alert alert-warning">
+            <i class="bi bi-exclamation-circle me-2"></i>{{ warning }}
+        </div>
+        {% endif %}
+
+        {% if stats %}
+        <div class="row g-3 mb-3">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center
+                        {% if api == 'API 900' %}bg-primary text-white{% else %}text-white{% endif %}"
+                        {% if api == 'API 1000/M' %}style="background:#7c3aed"{% endif %}>
+                        <span><i class="bi bi-file-earmark-binary me-2"></i>{{ filename }}</span>
+                        <div>
+                            <span class="badge bg-white bg-opacity-25">{{ api }}</span>
+                            {% if sensor_used %}<span class="badge bg-white bg-opacity-25 ms-1">{{ sensor_used }}</span>{% endif %}
+                        </div>
+                    </div>
+                    <div class="card-body p-3">
+                        <div class="row g-2">
+                            {% for key, val in stats.items %}
+                            <div class="col-sm-6 col-md-4 col-lg-3">
+                                <div style="font-size:0.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">{{ key }}</div>
+                                <div class="fw-bold" style="font-size:0.85rem">{{ val }}</div>
+                            </div>
+                            {% endfor %}
+                            {% if peak_freq %}
+                            <div class="col-sm-6 col-md-4 col-lg-3">
+                                <div style="font-size:0.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">Peak Frequency</div>
+                                <div class="fw-bold text-danger" style="font-size:0.85rem">{{ peak_freq }}</div>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        {% if audio_url %}
+                        <hr class="my-3">
+                        <div class="small text-muted fw-bold mb-2">AUDIO PLAYBACK</div>
+                        <audio controls preload="metadata" style="width:100%">
+                            <source src="{{ audio_url }}" type="audio/wav">
+                        </audio>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% if waveform_img %}
+        <div class="card mb-3">
+            <div class="card-header bg-dark text-white"><i class="bi bi-soundwave me-2"></i>Waveform</div>
+            <div class="card-body p-2">
+                <img src="data:image/png;base64,{{ waveform_img }}" class="analysis-img" alt="Waveform">
+            </div>
+        </div>
+        {% endif %}
+
+        {% if fft_img %}
+        <div class="card mb-3">
+            <div class="card-header bg-dark text-white"><i class="bi bi-bar-chart me-2"></i>FFT Spectrum</div>
+            <div class="card-body p-2">
+                <img src="data:image/png;base64,{{ fft_img }}" class="analysis-img" alt="FFT Spectrum">
+            </div>
+        </div>
+        {% endif %}
+
+        {% if spectrogram_img %}
+        <div class="card mb-3">
+            <div class="card-header bg-dark text-white"><i class="bi bi-grid-3x3 me-2"></i>Spectrogram</div>
+            <div class="card-body p-2">
+                <img src="data:image/png;base64,{{ spectrogram_img }}" class="analysis-img" alt="Spectrogram">
+            </div>
+        </div>
+        {% endif %}
+
+        {% else %}
+        {% if not error and not warning %}
+        <div class="card text-center p-5">
+            <i class="bi bi-bar-chart-line fs-1 text-muted"></i>
+            <p class="text-muted mt-3 mb-1">No file loaded. Upload a .rdvxz or .rdvxm file to see signal analysis.</p>
+            <p class="text-muted small">You can download sample files from the <a href="{% url 'samples' %}">Sample Files</a> page.</p>
+        </div>
+        {% endif %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

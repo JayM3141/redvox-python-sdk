@@ -1,0 +1,99 @@
+{% extends 'viewer/base.html' %}
+{% block title %}Validator — RedVox SDK GUI{% endblock %}
+{% block nav_validator %}active{% endblock %}
+{% block sdk_version %}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h3 class="fw-bold mb-0"><i class="bi bi-shield-check me-2 text-danger"></i>File Validator</h3>
+    <p class="text-muted mb-0">Validate .rdvxm (API 1000/M) files for spec compliance.</p>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header bg-dark text-white">Upload .rdvxm File</div>
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="upload-zone mb-3" onclick="document.getElementById('valFile').click()">
+                        <i class="bi bi-shield-check fs-2 text-muted"></i>
+                        <p class="fw-semibold mt-2 mb-1">Click to select file</p>
+                        <p class="text-muted small mb-0">Only .rdvxm supported</p>
+                        <p id="valFileName" class="text-danger small mt-1 mb-0"></p>
+                    </div>
+                    <input type="file" id="valFile" name="file" accept=".rdvxm" class="d-none"
+                           onchange="document.getElementById('valFileName').textContent = this.files[0]?.name || ''">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-shield-check me-2"></i>Validate File
+                    </button>
+                </form>
+
+                <div class="mt-4">
+                    <div class="small text-muted fw-bold mb-2">WHAT IT CHECKS</div>
+                    <ul class="small text-muted ps-3 mb-0">
+                        <li>Protobuf field compliance</li>
+                        <li>Required field presence</li>
+                        <li>Timestamp consistency</li>
+                        <li>Sensor data integrity</li>
+                        <li>API 1000/M spec adherence</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-8">
+        {% if error %}
+        <div class="alert alert-danger">
+            <h6 class="alert-heading"><i class="bi bi-exclamation-triangle me-2"></i>Error</h6>
+            <p class="mb-0">{{ error }}</p>
+        </div>
+        {% endif %}
+
+        {% if filename %}
+        <div class="card mb-3">
+            <div class="card-header d-flex align-items-center justify-content-between
+                {% if valid %}bg-success text-white{% else %}bg-danger text-white{% endif %}">
+                <span><i class="bi bi-file-earmark-binary me-2"></i>{{ filename }}</span>
+                {% if valid %}
+                <span class="badge bg-white text-success fw-bold"><i class="bi bi-check-circle me-1"></i>VALID</span>
+                {% else %}
+                <span class="badge bg-white text-danger fw-bold"><i class="bi bi-x-circle me-1"></i>INVALID</span>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                {% if valid %}
+                <div class="alert alert-success mb-3">
+                    <i class="bi bi-check-circle-fill me-2"></i>
+                    <strong>File is valid.</strong> This .rdvxm file conforms to the API 1000/M specification.
+                </div>
+                {% else %}
+                <div class="alert alert-danger mb-3">
+                    <i class="bi bi-x-circle-fill me-2"></i>
+                    <strong>Validation failed.</strong> See output below for details.
+                </div>
+                {% endif %}
+
+                {% if stdout %}
+                <div class="mb-2 text-muted small fw-bold">STDOUT</div>
+                <pre>{{ stdout }}</pre>
+                {% endif %}
+                {% if stderr %}
+                <div class="mb-2 text-muted small fw-bold">STDERR</div>
+                <pre class="border border-danger">{{ stderr }}</pre>
+                {% endif %}
+                <div class="small text-muted">Exit code: <code>{{ returncode }}</code></div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if not filename and not error %}
+        <div class="card text-center p-5">
+            <i class="bi bi-shield fs-1 text-muted"></i>
+            <p class="text-muted mt-3">Upload a .rdvxm file to validate it.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
