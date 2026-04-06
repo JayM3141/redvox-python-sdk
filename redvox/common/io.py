@@ -1,6 +1,7 @@
 """
 This module provides IO primitives for working with cross-API RedVox data.
 """
+
 import enum
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -231,7 +232,11 @@ class FileSystemWriter:
         """
         :return: the save mode
         """
-        return self._save_mode.name if hasattr(self, "_save_mode") else FileSystemSaveMode.TEMP
+        return (
+            self._save_mode.name
+            if hasattr(self, "_save_mode")
+            else FileSystemSaveMode.TEMP
+        )
 
     def full_name(self) -> str:
         """
@@ -302,7 +307,9 @@ class FileSystemWriter:
             "file_name": self.file_name,
             "file_extension": self.file_extension,
             "base_dir": self.base_dir,
-            "save_mode": self._save_mode.name if hasattr(self, "_save_mode") else FileSystemSaveMode.TEMP.name,
+            "save_mode": self._save_mode.name
+            if hasattr(self, "_save_mode")
+            else FileSystemSaveMode.TEMP.name,
         }
 
     @staticmethod
@@ -445,7 +452,9 @@ class IndexEntry:
                 return None
             full_path = path_str
 
-        return IndexEntry(full_path, station_id, date_time, ext, api_version)._set_compressed_decompressed_lz4_size()
+        return IndexEntry(
+            full_path, station_id, date_time, ext, api_version
+        )._set_compressed_decompressed_lz4_size()
 
     @staticmethod
     def from_native(entry) -> "IndexEntry":
@@ -467,7 +476,11 @@ class IndexEntry:
         import redvox_native
 
         entry = redvox_native.IndexEntry(
-            self.full_path, self.station_id, us_dt(self.date_time), self.extension, self.api_version.value
+            self.full_path,
+            self.station_id,
+            us_dt(self.date_time),
+            self.extension,
+            self.api_version.value,
         )
         return entry
 
@@ -485,7 +498,9 @@ class IndexEntry:
                     header = lz4.frame.get_frame_info(fp.read())
                     self.decompressed_file_size_bytes = header["content_size"]
                 elif self.api_version == ApiVersion.API_900:
-                    self.decompressed_file_size_bytes = calculate_uncompressed_size(fp.read())
+                    self.decompressed_file_size_bytes = calculate_uncompressed_size(
+                        fp.read()
+                    )
         return self
 
     def read(self) -> Optional[Union[WrappedRedvoxPacketM, "WrappedRedvoxPacket"]]:
@@ -549,7 +564,9 @@ class ReadFilter:
     extensions: Optional[Set[str]] = field(default_factory=lambda: {".rdvxm", ".rdvxz"})
     start_dt_buf: Optional[timedelta] = timedelta(minutes=2.0)
     end_dt_buf: Optional[timedelta] = timedelta(minutes=2.0)
-    api_versions: Optional[Set[ApiVersion]] = field(default_factory=lambda: {ApiVersion.API_900, ApiVersion.API_1000})
+    api_versions: Optional[Set[ApiVersion]] = field(
+        default_factory=lambda: {ApiVersion.API_900, ApiVersion.API_1000}
+    )
 
     @staticmethod
     def empty() -> "ReadFilter":
@@ -666,7 +683,9 @@ class ReadFilter:
         self.end_dt_buf = end_dt_buf
         return self
 
-    def with_api_versions(self, api_versions: Optional[Set[ApiVersion]]) -> "ReadFilter":
+    def with_api_versions(
+        self, api_versions: Optional[Set[ApiVersion]]
+    ) -> "ReadFilter":
         """
         Filters for specified API versions.
 
@@ -677,7 +696,9 @@ class ReadFilter:
         self.api_versions = api_versions
         return self
 
-    def apply_dt(self, date_time: datetime, dt_fn: Callable[[datetime], datetime] = lambda dt: dt) -> bool:
+    def apply_dt(
+        self, date_time: datetime, dt_fn: Callable[[datetime], datetime] = lambda dt: dt
+    ) -> bool:
         """
         Tests if a given datetime passes this filter.
 
@@ -686,11 +707,15 @@ class ReadFilter:
         :return: True if the datetime is included, False otherwise
         """
         check_type(date_time, [datetime])
-        start_buf: timedelta = timedelta(seconds=0) if self.start_dt_buf is None else self.start_dt_buf
+        start_buf: timedelta = (
+            timedelta(seconds=0) if self.start_dt_buf is None else self.start_dt_buf
+        )
         if self.start_dt is not None and date_time < (dt_fn(self.start_dt - start_buf)):
             return False
 
-        end_buf: timedelta = timedelta(seconds=0) if self.end_dt_buf is None else self.end_dt_buf
+        end_buf: timedelta = (
+            timedelta(seconds=0) if self.end_dt_buf is None else self.end_dt_buf
+        )
         if self.end_dt is not None and date_time > (dt_fn(self.end_dt + end_buf)):
             return False
 
@@ -844,11 +869,15 @@ class IndexSummary:
         :param index: Index to build summary from.
         :return: An instance of IndexSummary.
         """
-        station_summaries: Dict[ApiVersion, Dict[str, IndexStationSummary]] = defaultdict(dict)
+        station_summaries: Dict[ApiVersion, Dict[str, IndexStationSummary]] = (
+            defaultdict(dict)
+        )
 
         entry: IndexEntry
         for entry in index.entries:
-            sub_entry: Dict[str, IndexStationSummary] = station_summaries[entry.api_version]
+            sub_entry: Dict[str, IndexStationSummary] = station_summaries[
+                entry.api_version
+            ]
             if entry.station_id in sub_entry:
                 # Update existing station summary
                 sub_entry[entry.station_id].update(entry)
@@ -875,7 +904,9 @@ class Index:
         :param index_native: A native index.
         :return: A Python index.
         """
-        entries: List[IndexEntry] = list(map(IndexEntry.from_native, index_native.entries))
+        entries: List[IndexEntry] = list(
+            map(IndexEntry.from_native, index_native.entries)
+        )
         return Index(entries)._set_decompressed_file_size()
 
     def to_native(self):
@@ -889,7 +920,11 @@ class Index:
         """
         :return: the maximum decompressed file size in the entries
         """
-        return max([fi.decompressed_file_size_bytes for fi in self.entries]) if len(self.entries) > 0 else np.nan
+        return (
+            max([fi.decompressed_file_size_bytes for fi in self.entries])
+            if len(self.entries) > 0
+            else np.nan
+        )
 
     def get_decompressed_file_size(self) -> int:
         """
@@ -897,7 +932,9 @@ class Index:
         """
         if len(self.entries) == 0:
             return np.nan
-        if self.entries[0].decompressed_file_size_bytes == 0 and os.path.exists(self.entries[0].full_path):
+        if self.entries[0].decompressed_file_size_bytes == 0 and os.path.exists(
+            self.entries[0].full_path
+        ):
             with lz4.frame.open(self.entries[0].full_path, "rb") as fr:
                 return len(fr.read())
         return self.entries[0].decompressed_file_size_bytes
@@ -945,7 +982,9 @@ class Index:
         """
         return Index([en for en in self.entries if en.station_id == station_id])
 
-    def stream_raw(self, read_filter: ReadFilter = ReadFilter()) -> Iterator[Union["RedvoxPacket", RedvoxPacketM]]:
+    def stream_raw(
+        self, read_filter: ReadFilter = ReadFilter()
+    ) -> Iterator[Union["RedvoxPacket", RedvoxPacketM]]:
         """
         Read, decompress, deserialize, and then stream RedVox data pointed to by this index.
 
@@ -969,7 +1008,9 @@ class Index:
         # noinspection Mypy
         return map(IndexEntry.read, filtered)
 
-    def read_raw(self, read_filter: ReadFilter = ReadFilter()) -> List[Union["RedvoxPacket", RedvoxPacketM]]:
+    def read_raw(
+        self, read_filter: ReadFilter = ReadFilter()
+    ) -> List[Union["RedvoxPacket", RedvoxPacketM]]:
         """
         Read, decompress, and deserialize RedVox data pointed to by this index.
 
@@ -978,7 +1019,9 @@ class Index:
         """
         return list(self.stream_raw(read_filter))
 
-    def read(self, read_filter: ReadFilter = ReadFilter()) -> List[Union["WrappedRedvoxPacket", WrappedRedvoxPacketM]]:
+    def read(
+        self, read_filter: ReadFilter = ReadFilter()
+    ) -> List[Union["WrappedRedvoxPacket", WrappedRedvoxPacketM]]:
         """
         Read, decompress, deserialize, and wrap RedVox data pointed to by this index.
 
@@ -991,7 +1034,9 @@ class Index:
         """
         :return: sum of file size in bytes of index
         """
-        return float(np.sum([entry.decompressed_file_size_bytes for entry in self.entries]))
+        return float(
+            np.sum([entry.decompressed_file_size_bytes for entry in self.entries])
+        )
 
     def read_contents(self) -> List[RedvoxPacketM]:
         """
@@ -1004,13 +1049,17 @@ class Index:
         # Iterate over the API 900 packets in a memory efficient way
         # and convert to API 1000
         # noinspection PyTypeChecker
-        for packet_900 in self.stream_raw(ReadFilter.empty().with_api_versions({ApiVersion.API_900})):
+        for packet_900 in self.stream_raw(
+            ReadFilter.empty().with_api_versions({ApiVersion.API_900})
+        ):
             # noinspection Mypy
             result.append(ac.convert_api_900_to_1000_raw(packet_900))
 
         # Grab the API 1000 packets
         # noinspection PyTypeChecker
-        for packet in self.stream_raw(ReadFilter.empty().with_api_versions({ApiVersion.API_1000})):
+        for packet in self.stream_raw(
+            ReadFilter.empty().with_api_versions({ApiVersion.API_1000})
+        ):
             # noinspection Mypy
             result.append(packet)
 
@@ -1024,14 +1073,18 @@ class Index:
         """
         # Grab the API 1000 packets
         # noinspection PyTypeChecker
-        for packet in self.stream_raw(ReadFilter.empty().with_api_versions({ApiVersion.API_1000})):
+        for packet in self.stream_raw(
+            ReadFilter.empty().with_api_versions({ApiVersion.API_1000})
+        ):
             # noinspection Mypy
             return packet
 
         # Iterate over the API 900 packets in a memory efficient way
         # and convert to API 1000
         # noinspection PyTypeChecker
-        for packet_900 in self.stream_raw(ReadFilter.empty().with_api_versions({ApiVersion.API_900})):
+        for packet_900 in self.stream_raw(
+            ReadFilter.empty().with_api_versions({ApiVersion.API_900})
+        ):
             # noinspection Mypy
             return ac.convert_api_900_to_1000_raw(packet_900)
 
@@ -1053,15 +1106,25 @@ def _list_subdirs(base_dir: str, valid_choices: Set[str]) -> Iterator[str]:
     :param valid_choices: A list of valid directory names.
     :return: A list of valid subdirs.
     """
-    subdirs: Iterator[str] = map(lambda p: PurePath(p).name, glob(os.path.join(base_dir, "*", "")))
+    subdirs: Iterator[str] = map(
+        lambda p: PurePath(p).name, glob(os.path.join(base_dir, "*", ""))
+    )
     return filter(valid_choices.__contains__, subdirs)
 
 
 # These fields are set at runtime and provide the implementation (either native or pure python) for IO methods
-__INDEX_STRUCTURED_FN: Callable[[str, ReadFilter, Optional[multiprocessing.pool.Pool]], Index]
-__INDEX_STRUCTURED_900_FN: Callable[[str, ReadFilter, bool, Optional[multiprocessing.pool.Pool]], Index]
-__INDEX_STRUCTURED_1000_FN: Callable[[str, ReadFilter, bool, Optional[multiprocessing.pool.Pool]], Index]
-__INDEX_UNSTRUCTURED_FN: Callable[[str, ReadFilter, bool, Optional[multiprocessing.pool.Pool]], Index]
+__INDEX_STRUCTURED_FN: Callable[
+    [str, ReadFilter, Optional[multiprocessing.pool.Pool]], Index
+]
+__INDEX_STRUCTURED_900_FN: Callable[
+    [str, ReadFilter, bool, Optional[multiprocessing.pool.Pool]], Index
+]
+__INDEX_STRUCTURED_1000_FN: Callable[
+    [str, ReadFilter, bool, Optional[multiprocessing.pool.Pool]], Index
+]
+__INDEX_UNSTRUCTURED_FN: Callable[
+    [str, ReadFilter, bool, Optional[multiprocessing.pool.Pool]], Index
+]
 
 
 def __map_opt(fn, v):
@@ -1125,7 +1188,9 @@ def index_unstructured_py(
 
     index: Index = Index()
 
-    extensions: Set[str] = read_filter.extensions if read_filter.extensions is not None else {""}
+    extensions: Set[str] = (
+        read_filter.extensions if read_filter.extensions is not None else {""}
+    )
 
     all_paths: List[str] = []
 
@@ -1153,7 +1218,9 @@ def index_unstructured_py(
     # else:
     #     all_entries = map(IndexEntry.from_path, all_paths)
 
-    entries: Iterator[IndexEntry] = filter(read_filter.apply, filter(_not_none, all_entries))
+    entries: Iterator[IndexEntry] = filter(
+        read_filter.apply, filter(_not_none, all_entries)
+    )
 
     index.append(entries)
 
@@ -1184,15 +1251,21 @@ def index_structured_api_900_py(
 
     for year in _list_subdirs(base_dir, __VALID_YEARS):
         for month in _list_subdirs(os.path.join(base_dir, year), __VALID_MONTHS):
-            for day in _list_subdirs(os.path.join(base_dir, year, month), __VALID_DATES):
+            for day in _list_subdirs(
+                os.path.join(base_dir, year, month), __VALID_DATES
+            ):
                 # Before scanning for *.rdvxz files, let's see if the current year, month, day, are in the
                 # filter's range. If not, we can short circuit and skip getting the *.rdvxz files.
-                if not read_filter.apply_dt(datetime(int(year), int(month), int(day)), dt_fn=truncate_dt_ymd):
+                if not read_filter.apply_dt(
+                    datetime(int(year), int(month), int(day)), dt_fn=truncate_dt_ymd
+                ):
                     continue
 
                 data_dir: str = os.path.join(base_dir, year, month, day)
                 entries: Iterator[IndexEntry] = iter(
-                    index_unstructured_py(data_dir, read_filter, sort=False, pool=_pool).entries
+                    index_unstructured_py(
+                        data_dir, read_filter, sort=False, pool=_pool
+                    ).entries
                 )
                 index.append(entries)
 
@@ -1225,8 +1298,12 @@ def index_structured_api_1000_py(
 
     for year in _list_subdirs(base_dir, __VALID_YEARS):
         for month in _list_subdirs(os.path.join(base_dir, year), __VALID_MONTHS):
-            for day in _list_subdirs(os.path.join(base_dir, year, month), __VALID_DATES):
-                for hour in _list_subdirs(os.path.join(base_dir, year, month, day), __VALID_HOURS):
+            for day in _list_subdirs(
+                os.path.join(base_dir, year, month), __VALID_DATES
+            ):
+                for hour in _list_subdirs(
+                    os.path.join(base_dir, year, month, day), __VALID_HOURS
+                ):
                     # Before scanning for *.rdvxm files, let's see if the current year, month, day, hour are in the
                     # filter's range. If not, we can short circuit and skip getting the *.rdvxm files.
                     if not read_filter.apply_dt(
@@ -1237,7 +1314,9 @@ def index_structured_api_1000_py(
 
                     data_dir: str = os.path.join(base_dir, year, month, day, hour)
                     entries: Iterator[IndexEntry] = iter(
-                        index_unstructured_py(data_dir, read_filter, sort=False, pool=_pool).entries
+                        index_unstructured_py(
+                            data_dir, read_filter, sort=False, pool=_pool
+                        ).entries
                     )
                     index.append(entries)
 
@@ -1329,7 +1408,9 @@ try:
         read_filter_native.end_dt_buf = __map_opt(__dur2us, read_filter.end_dt_buf)
         read_filter_native.station_ids = read_filter.station_ids
         read_filter_native.extensions = read_filter.extensions
-        read_filter_native.api_versions = __map_opt(__api_native, read_filter.api_versions)
+        read_filter_native.api_versions = __map_opt(
+            __api_native, read_filter.api_versions
+        )
 
         return read_filter_native
 
@@ -1349,7 +1430,9 @@ try:
         :return: A list of wrapped packets on an empty list if none match the filter or none are found
         """
         read_filter = __into_read_filter_native(read_filter)
-        return Index.from_native(redvox_native.index_structured_900(base_dir, read_filter, sort))
+        return Index.from_native(
+            redvox_native.index_structured_900(base_dir, read_filter, sort)
+        )
 
     def __index_structured_1000_native(
         base_dir: str,
@@ -1367,7 +1450,9 @@ try:
         :return: A list of wrapped packets on an empty list if none match the filter or none are found
         """
         read_filter = __into_read_filter_native(read_filter)
-        return Index.from_native(redvox_native.index_structured_1000(base_dir, read_filter, sort))
+        return Index.from_native(
+            redvox_native.index_structured_1000(base_dir, read_filter, sort)
+        )
 
     def __index_structured_native(
         base_dir: str,
@@ -1402,7 +1487,9 @@ try:
         :return: An iterator of valid paths.
         """
         read_filter = __into_read_filter_native(read_filter)
-        return Index.from_native(redvox_native.index_unstructured(base_dir, read_filter, sort))
+        return Index.from_native(
+            redvox_native.index_unstructured(base_dir, read_filter, sort)
+        )
 
     __INDEX_STRUCTURED_FN = __index_structured_native
     __INDEX_STRUCTURED_900_FN = __index_structured_900_native
@@ -1510,11 +1597,15 @@ def sort_unstructured_redvox_data(
     check_type(read_filter, [ReadFilter])
 
     if not os.path.exists(input_dir):
-        print(f"Directory with files to sort: {input_dir} does not exist.  Stopping program.")
+        print(
+            f"Directory with files to sort: {input_dir} does not exist.  Stopping program."
+        )
         return False
 
     if not os.path.exists(output_dir):
-        print(f"Base directory for creation: {output_dir} does not exist.  Please create it.  Stopping program.")
+        print(
+            f"Base directory for creation: {output_dir} does not exist.  Please create it.  Stopping program."
+        )
         return False
 
     index: Index = Index()
@@ -1522,11 +1613,15 @@ def sort_unstructured_redvox_data(
     for extension in read_filter.extensions:
         pattern: str = str(PurePath(input_dir).joinpath(f"*{extension}"))
         paths: List[str] = glob(os.path.join(input_dir, pattern))
-        entries: Iterator[IndexEntry] = filter(read_filter.apply, filter(_not_none, map(IndexEntry.from_path, paths)))
+        entries: Iterator[IndexEntry] = filter(
+            read_filter.apply, filter(_not_none, map(IndexEntry.from_path, paths))
+        )
         index.append(entries)
 
     if len(index.entries) < 1:
-        print(f"Directory with files to sort: {input_dir} does not contain Redvox data to read.  Stopping program.")
+        print(
+            f"Directory with files to sort: {input_dir} does not contain Redvox data to read.  Stopping program."
+        )
         return False
 
     for value in index.entries:
@@ -1551,7 +1646,9 @@ def sort_unstructured_redvox_data(
                 )
             )
         else:
-            print(f"Unknown API version {api_version} found in data.  Stopping program.")
+            print(
+                f"Unknown API version {api_version} found in data.  Stopping program."
+            )
             return False
         os.makedirs(file_out_dir, exist_ok=True)
 
