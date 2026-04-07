@@ -1,0 +1,341 @@
+{% extends 'viewer/base.html' %}
+{% block title %}DataWindow — RedVox SDK GUI{% endblock %}
+{% block nav_data_window %}active{% endblock %}
+{% block sdk_version %}{% if data_window_summary %}{{ data_window_summary.sdk_version }}{% endif %}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h3 class="fw-bold mb-0"><i class="bi bi-collection me-2 text-danger"></i>DataWindow Builder</h3>
+    <p class="text-muted mb-0">Create, cache, load, and inspect DataWindows stored under <code>MEDIA_ROOT/data_windows</code>.</p>
+</div>
+
+<div class="row g-4">
+    <div class="col-xl-4">
+        <div class="card mb-4">
+            <div class="card-header bg-dark text-white">Create DataWindow</div>
+            <div class="card-body">
+                <form method="post" class="row g-3">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="create">
+
+                    <div class="col-12">
+                        <label for="input_dir" class="form-label fw-semibold">Input Directory</label>
+                        <input id="input_dir" name="input_dir" type="text" class="form-control" value="{{ form_values.input_dir }}" placeholder="C:\\path\\to\\redvox\\data" required>
+                        <div class="form-text">Absolute directory containing RedVox files.</div>
+                    </div>
+
+                    <div class="col-md-7">
+                        <label for="event_name" class="form-label fw-semibold">Event Name</label>
+                        <input id="event_name" name="event_name" type="text" class="form-control" value="{{ form_values.event_name }}" maxlength="80">
+                    </div>
+
+                    <div class="col-md-5">
+                        <label for="output_type" class="form-label fw-semibold">Output Type</label>
+                        <select id="output_type" name="output_type" class="form-select">
+                            <option value="LZ4" {% if form_values.output_type == 'LZ4' %}selected{% endif %}>LZ4</option>
+                            <option value="JSON" {% if form_values.output_type == 'JSON' %}selected{% endif %}>JSON</option>
+                            <option value="PARQUET" {% if form_values.output_type == 'PARQUET' %}selected{% endif %}>PARQUET</option>
+                        </select>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="form-check">
+                            <input id="structured_layout" name="structured_layout" type="checkbox" class="form-check-input" {% if form_values.structured_layout %}checked{% endif %}>
+                            <label for="structured_layout" class="form-check-label">Input directory uses RedVox structured layout</label>
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <label for="station_ids" class="form-label fw-semibold">Station IDs</label>
+                        <textarea id="station_ids" name="station_ids" class="form-control" rows="2" placeholder="Optional; comma or space separated">{{ form_values.station_ids }}</textarea>
+                        <div class="form-text">Leave blank to include all available stations.</div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label for="start_datetime" class="form-label fw-semibold">Start Datetime</label>
+                        <input id="start_datetime" name="start_datetime" type="datetime-local" class="form-control" value="{{ form_values.start_datetime }}">
+                    </div>
+
+                    <div class="col-md-6">
+                        <label for="end_datetime" class="form-label fw-semibold">End Datetime</label>
+                        <input id="end_datetime" name="end_datetime" type="datetime-local" class="form-control" value="{{ form_values.end_datetime }}">
+                    </div>
+
+                    <div class="col-md-4">
+                        <label for="start_buffer_seconds" class="form-label fw-semibold">Start Buffer (s)</label>
+                        <input id="start_buffer_seconds" name="start_buffer_seconds" type="number" step="any" class="form-control" value="{{ form_values.start_buffer_seconds }}">
+                    </div>
+
+                    <div class="col-md-4">
+                        <label for="end_buffer_seconds" class="form-label fw-semibold">End Buffer (s)</label>
+                        <input id="end_buffer_seconds" name="end_buffer_seconds" type="number" step="any" class="form-control" value="{{ form_values.end_buffer_seconds }}">
+                    </div>
+
+                    <div class="col-md-4">
+                        <label for="drop_time_seconds" class="form-label fw-semibold">Drop Gap (s)</label>
+                        <input id="drop_time_seconds" name="drop_time_seconds" type="number" step="any" class="form-control" value="{{ form_values.drop_time_seconds }}">
+                    </div>
+
+                    <div class="col-md-6">
+                        <label for="copy_edge_points" class="form-label fw-semibold">Edge Point Mode</label>
+                        <select id="copy_edge_points" name="copy_edge_points" class="form-select">
+                            <option value="COPY" {% if form_values.copy_edge_points == 'COPY' %}selected{% endif %}>COPY</option>
+                            <option value="NAN" {% if form_values.copy_edge_points == 'NAN' %}selected{% endif %}>NAN</option>
+                            <option value="INTERPOLATE" {% if form_values.copy_edge_points == 'INTERPOLATE' %}selected{% endif %}>INTERPOLATE</option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="small text-muted fw-bold mb-2">OPTIONS</div>
+                        <div class="d-flex flex-column gap-2">
+                            <div class="form-check">
+                                <input id="apply_correction" name="apply_correction" type="checkbox" class="form-check-input" {% if form_values.apply_correction %}checked{% endif %}>
+                                <label for="apply_correction" class="form-check-label">Apply timing correction</label>
+                            </div>
+                            <div class="form-check">
+                                <input id="use_model_correction" name="use_model_correction" type="checkbox" class="form-check-input" {% if form_values.use_model_correction %}checked{% endif %}>
+                                <label for="use_model_correction" class="form-check-label">Use model correction</label>
+                            </div>
+                            <div class="form-check">
+                                <input id="make_runme" name="make_runme" type="checkbox" class="form-check-input" {% if form_values.make_runme %}checked{% endif %}>
+                                <label for="make_runme" class="form-check-label">Create runme.py artifact</label>
+                            </div>
+                            <div class="form-check">
+                                <input id="debug" name="debug" type="checkbox" class="form-check-input" {% if form_values.debug %}checked{% endif %}>
+                                <label for="debug" class="form-check-label">Enable SDK debug output</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-play-circle me-2"></i>Create and Cache DataWindow
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header" style="background:#7c3aed;color:#fff;">Cached DataWindows</div>
+            <div class="card-body">
+                <form method="post" class="row g-3 mb-3">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="load">
+                    <div class="col-12">
+                        <label for="cache_key" class="form-label fw-semibold">Load from Cache</label>
+                        <select id="cache_key" name="cache_key" class="form-select" {% if not cache_entries %}disabled{% endif %}>
+                            <option value="">Select a cached DataWindow</option>
+                            {% for entry in cache_entries %}
+                            <option value="{{ entry.cache_key }}" {% if selected_cache_key == entry.cache_key %}selected{% endif %}>{{ entry.display_name }} — {{ entry.out_type }} — {{ entry.modified }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-outline-danger w-100" {% if not cache_entries %}disabled{% endif %}>
+                            <i class="bi bi-folder-symlink me-2"></i>Load Cached DataWindow
+                        </button>
+                    </div>
+                </form>
+
+                {% if cache_entries %}
+                <div class="d-flex flex-column gap-2">
+                    {% for entry in cache_entries %}
+                    <div class="border rounded p-3 {% if selected_cache_key == entry.cache_key %}border-danger{% endif %}">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div>
+                                <div class="fw-semibold text-break">{{ entry.display_name }}</div>
+                                <div class="small text-muted">{{ entry.modified }}</div>
+                            </div>
+                            <span class="badge {% if entry.out_type == 'LZ4' %}bg-primary{% elif entry.out_type == 'JSON' %}bg-success{% else %}text-bg-dark{% endif %}">{{ entry.out_type }}</span>
+                        </div>
+                        <div class="small mt-2"><strong>Stations:</strong> {{ entry.station_count }}</div>
+                        <div class="small text-break"><strong>Input:</strong> {{ entry.input_dir|default:'—' }}</div>
+                        <div class="small text-break text-muted"><strong>Metadata:</strong> {{ entry.metadata_name }}</div>
+                        {% if entry.errors %}
+                        <div class="small text-danger mt-2">{{ entry.errors|join:' | ' }}</div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-center text-muted py-3">
+                    <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+                    No cached DataWindows yet.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-8">
+        {% if success %}
+        <div class="alert alert-success">
+            <i class="bi bi-check-circle me-2"></i>{{ success }}
+        </div>
+        {% endif %}
+
+        {% if error %}
+        <div class="alert alert-danger">
+            <h6 class="alert-heading"><i class="bi bi-exclamation-triangle me-2"></i>Error</h6>
+            <p class="mb-0">{{ error }}</p>
+            {% if traceback %}
+            <hr>
+            <pre class="mb-0 small">{{ traceback }}</pre>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if data_window_summary %}
+        <div class="row g-3 mb-4">
+            <div class="col-md-3 col-sm-6">
+                <div class="card stat-card h-100">
+                    <div class="card-body">
+                        <div class="text-muted small mb-1">Stations</div>
+                        <div class="fs-4 fw-bold text-dark">{{ data_window_summary.station_count }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6">
+                <div class="card stat-card h-100">
+                    <div class="card-body">
+                        <div class="text-muted small mb-1">Output Type</div>
+                        <div class="fs-4 fw-bold text-dark">{{ data_window_summary.out_type }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6">
+                <div class="card stat-card h-100">
+                    <div class="card-body">
+                        <div class="text-muted small mb-1">Errors</div>
+                        <div class="fs-4 fw-bold text-dark">{{ data_window_summary.error_count }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6">
+                <div class="card stat-card h-100">
+                    <div class="card-body">
+                        <div class="text-muted small mb-1">Cache Key</div>
+                        <div class="small fw-semibold text-break">{{ data_window_summary.cache_key|default:'—' }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header bg-dark text-white">Window Summary</div>
+            <div class="card-body">
+                <div class="field-row"><div class="field-key">Event Name</div><div class="field-val">{{ data_window_summary.event_name }}</div></div>
+                <div class="field-row"><div class="field-key">Output Type</div><div class="field-val">{{ data_window_summary.out_type }}</div></div>
+                <div class="field-row"><div class="field-key">Start Time</div><div class="field-val">{{ data_window_summary.start_time }}</div></div>
+                <div class="field-row"><div class="field-key">End Time</div><div class="field-val">{{ data_window_summary.end_time }}</div></div>
+                <div class="field-row"><div class="field-key">Station IDs</div><div class="field-val">{% if data_window_summary.station_ids %}{{ data_window_summary.station_ids|join:', ' }}{% else %}—{% endif %}</div></div>
+                <div class="field-row"><div class="field-key">Cache Directory</div><div class="field-val">{{ data_window_summary.cache_dir|default:'—' }}</div></div>
+                <div class="field-row"><div class="field-key">Metadata Path</div><div class="field-val">{{ data_window_summary.metadata_path|default:'—' }}</div></div>
+                <div class="field-row"><div class="field-key">Saved Artifact</div><div class="field-val">{{ data_window_summary.saved_artifact|default:'—' }}</div></div>
+                <div class="field-row"><div class="field-key">SDK Version</div><div class="field-val">{{ data_window_summary.sdk_version }}</div></div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header" style="background:#7c3aed;color:#fff;">Configuration</div>
+            <div class="card-body">
+                {% if data_window_summary.config %}
+                <div class="field-row"><div class="field-key">Input Directory</div><div class="field-val">{{ data_window_summary.config.input_dir }}</div></div>
+                <div class="field-row"><div class="field-key">Structured Layout</div><div class="field-val">{{ data_window_summary.config.structured_layout }}</div></div>
+                <div class="field-row"><div class="field-key">Start Datetime</div><div class="field-val">{{ data_window_summary.config.start_datetime }}</div></div>
+                <div class="field-row"><div class="field-key">End Datetime</div><div class="field-val">{{ data_window_summary.config.end_datetime }}</div></div>
+                <div class="field-row"><div class="field-key">Start Buffer (s)</div><div class="field-val">{{ data_window_summary.config.start_buffer_seconds }}</div></div>
+                <div class="field-row"><div class="field-key">End Buffer (s)</div><div class="field-val">{{ data_window_summary.config.end_buffer_seconds }}</div></div>
+                <div class="field-row"><div class="field-key">Drop Gap (s)</div><div class="field-val">{{ data_window_summary.config.drop_time_seconds }}</div></div>
+                <div class="field-row"><div class="field-key">Requested Station IDs</div><div class="field-val">{% if data_window_summary.config.station_ids %}{{ data_window_summary.config.station_ids|join:', ' }}{% else %}—{% endif %}</div></div>
+                <div class="field-row"><div class="field-key">Apply Correction</div><div class="field-val">{{ data_window_summary.config.apply_correction }}</div></div>
+                <div class="field-row"><div class="field-key">Use Model Correction</div><div class="field-val">{{ data_window_summary.config.use_model_correction }}</div></div>
+                <div class="field-row"><div class="field-key">Edge Point Mode</div><div class="field-val">{{ data_window_summary.config.copy_edge_points }}</div></div>
+                {% else %}
+                <div class="text-muted">No configuration metadata is available.</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="row g-4 mb-4">
+            <div class="col-lg-6">
+                <div class="card h-100">
+                    <div class="card-header bg-dark text-white">Saved Files</div>
+                    <div class="card-body">
+                        {% if data_window_summary.saved_files %}
+                        <div class="d-flex flex-column gap-2">
+                            {% for file_name in data_window_summary.saved_files %}
+                            <div class="small text-break border rounded px-3 py-2">{{ file_name }}</div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <div class="text-muted">No saved files were discovered.</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="card h-100">
+                    <div class="card-header" style="background:#064e3b;color:#fff;">DataWindow Errors</div>
+                    <div class="card-body">
+                        {% if data_window_summary.errors %}
+                        <ul class="mb-0 small">
+                            {% for item in data_window_summary.errors %}
+                            <li class="mb-2 text-break">{{ item }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <div class="text-success small fw-semibold">No DataWindow errors reported.</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header bg-dark text-white">Stations</div>
+            <div class="card-body p-0">
+                {% if data_window_summary.stations %}
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>ID</th>
+                                <th>UUID</th>
+                                <th>Start</th>
+                                <th>First Sample</th>
+                                <th>Last Sample</th>
+                                <th>Sensors</th>
+                                <th>Errors</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for station in data_window_summary.stations %}
+                            <tr>
+                                <td class="small fw-semibold text-break">{{ station.id }}</td>
+                                <td class="small text-break">{{ station.uuid }}</td>
+                                <td class="small text-break">{{ station.start_date }}</td>
+                                <td class="small text-break">{{ station.first_data_timestamp }}</td>
+                                <td class="small text-break">{{ station.last_data_timestamp }}</td>
+                                <td class="small text-break">{% if station.sensors %}{{ station.sensors|join:', ' }}{% else %}—{% endif %}</td>
+                                <td class="small text-break">{% if station.errors %}{{ station.errors|join:' | ' }}{% else %}—{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="p-4 text-muted">No station metadata is available for this DataWindow.</div>
+                {% endif %}
+            </div>
+        </div>
+        {% elif not error %}
+        <div class="card border-dashed text-center p-5">
+            <i class="bi bi-window-stack fs-1 text-muted"></i>
+            <p class="text-muted mt-3 mb-0">Create a DataWindow or load one from the cache to inspect its metadata here.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

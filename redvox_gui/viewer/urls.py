@@ -4,6 +4,7 @@ from . import views
 urlpatterns = [
     path('', views.dashboard, name='dashboard'),
     path('inspect/', views.inspect, name='inspect'),
+    path('data_window/', views.data_window, name='data_window'),
     path('converter/', views.converter, name='converter'),
     path('validator/', views.validator, name='validator'),
     path('cli/', views.cli_runner, name='cli_runner'),

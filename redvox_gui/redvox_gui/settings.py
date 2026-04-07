@@ -1,7 +1,13 @@
 from pathlib import Path
 import os
+import importlib.util
+import sys
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+REPO_ROOT = BASE_DIR.parent
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 SECRET_KEY = 'django-insecure-j!4o^k=8soabd0wgid(fnw_3x^n9^307t8rexarueb82#ttoc2'
 
@@ -13,18 +19,20 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.staticfiles',
-    'whitenoise.runserver_nostatic',
     'viewer',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+if importlib.util.find_spec('whitenoise') is not None:
+    INSTALLED_APPS.insert(3, 'whitenoise.runserver_nostatic')
+    MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
 
 ROOT_URLCONF = 'redvox_gui.urls'
 

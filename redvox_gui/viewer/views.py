@@ -9,13 +9,15 @@ import traceback
 import subprocess
 import uuid
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pprint import pformat
 
 import numpy as np
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
 from django.conf import settings
+
+REDVOX_REPO_ROOT = Path(getattr(settings, 'REPO_ROOT', Path(__file__).resolve().parents[2]))
 
 # ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -37,6 +39,329 @@ def _read_rdvxm(path: str):
     with open(path, 'rb') as f:
         data = f.read()
     return WrappedRedvoxPacketM.from_compressed_bytes(data)
+
+
+def _redvox_cli_env():
+    env = os.environ.copy()
+    repo_root = str(REDVOX_REPO_ROOT)
+    pythonpath = env.get('PYTHONPATH')
+    env['PYTHONPATH'] = repo_root if not pythonpath else os.pathsep.join([repo_root, pythonpath])
+    return env
+
+
+def _run_redvox_cli(args, timeout: int):
+    return subprocess.run(
+        [sys.executable, '-m', 'redvox.cli.cli', *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=str(REDVOX_REPO_ROOT),
+        env=_redvox_cli_env(),
+    )
+
+
+def _data_window_cache_root(ensure_exists: bool = False) -> Path:
+    root = Path(settings.MEDIA_ROOT) / 'data_windows'
+    if ensure_exists:
+        root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _default_data_window_form_values() -> dict:
+    return {
+        'input_dir': '',
+        'event_name': 'dw',
+        'output_type': 'LZ4',
+        'structured_layout': True,
+        'start_datetime': '',
+        'end_datetime': '',
+        'start_buffer_seconds': '120',
+        'end_buffer_seconds': '120',
+        'drop_time_seconds': '0.2',
+        'station_ids': '',
+        'apply_correction': True,
+        'use_model_correction': True,
+        'copy_edge_points': 'COPY',
+        'make_runme': False,
+        'debug': False,
+    }
+
+
+def _data_window_form_values(post) -> dict:
+    defaults = _default_data_window_form_values()
+    return {
+        'input_dir': post.get('input_dir', defaults['input_dir']).strip(),
+        'event_name': post.get('event_name', defaults['event_name']).strip() or defaults['event_name'],
+        'output_type': post.get('output_type', defaults['output_type']).strip().upper() or defaults['output_type'],
+        'structured_layout': post.get('structured_layout') == 'on',
+        'start_datetime': post.get('start_datetime', defaults['start_datetime']).strip(),
+        'end_datetime': post.get('end_datetime', defaults['end_datetime']).strip(),
+        'start_buffer_seconds': post.get('start_buffer_seconds', defaults['start_buffer_seconds']).strip() or defaults['start_buffer_seconds'],
+        'end_buffer_seconds': post.get('end_buffer_seconds', defaults['end_buffer_seconds']).strip() or defaults['end_buffer_seconds'],
+        'drop_time_seconds': post.get('drop_time_seconds', defaults['drop_time_seconds']).strip() or defaults['drop_time_seconds'],
+        'station_ids': post.get('station_ids', defaults['station_ids']).strip(),
+        'apply_correction': post.get('apply_correction') == 'on',
+        'use_model_correction': post.get('use_model_correction') == 'on',
+        'copy_edge_points': post.get('copy_edge_points', defaults['copy_edge_points']).strip().upper() or defaults['copy_edge_points'],
+        'make_runme': post.get('make_runme') == 'on',
+        'debug': post.get('debug') == 'on',
+    }
+
+
+def _sanitize_data_window_name(name: str) -> str:
+    cleaned = ''.join(ch if ch.isalnum() or ch in {'-', '_'} else '_' for ch in (name or 'dw'))
+    cleaned = cleaned.strip('._-')
+    return cleaned or 'dw'
+
+
+def _parse_data_window_datetime(value: str):
+    if not value:
+        return None
+    dt_value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if dt_value.tzinfo is None:
+        return dt_value.replace(tzinfo=timezone.utc)
+    return dt_value.astimezone(timezone.utc)
+
+
+def _parse_data_window_station_ids(raw: str):
+    station_ids = [token for token in raw.replace(',', ' ').split() if token]
+    return station_ids or None
+
+
+def _format_utc_datetime(value) -> str:
+    if not value:
+        return '—'
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.strftime('%Y-%m-%d %H:%M:%S UTC')
+
+
+def _format_epoch_micros(value) -> str:
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return '—'
+    if np.isnan(numeric_value) or np.isinf(numeric_value):
+        return '—'
+    return datetime.fromtimestamp(numeric_value / 1_000_000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f UTC')
+
+
+def _format_filesystem_datetime(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+
+
+def _looks_like_data_window_metadata(payload) -> bool:
+    return isinstance(payload, dict) and {'event_name', 'config', 'out_type'}.issubset(payload.keys())
+
+
+def _find_data_window_metadata_file(cache_target: Path):
+    if cache_target.is_file():
+        if cache_target.suffix.lower() != '.json':
+            return None
+        try:
+            with open(cache_target, 'r', encoding='utf-8') as file_obj:
+                payload = json.load(file_obj)
+        except Exception:
+            return None
+        return cache_target if _looks_like_data_window_metadata(payload) else None
+    if not cache_target.exists() or not cache_target.is_dir():
+        return None
+    json_files = sorted(path for path in cache_target.glob('*.json') if path.is_file())
+    for path in json_files:
+        try:
+            with open(path, 'r', encoding='utf-8') as file_obj:
+                payload = json.load(file_obj)
+        except Exception:
+            continue
+        if _looks_like_data_window_metadata(payload):
+            return path
+    return None
+
+
+def _summarize_station(station) -> dict:
+    station_dict = station.as_dict()
+    errors_dict = station_dict.get('errors') if isinstance(station_dict.get('errors'), dict) else {}
+    return {
+        'id': station.id() or '—',
+        'uuid': station.uuid() or '—',
+        'start_date': _format_epoch_micros(station.start_date()),
+        'first_data_timestamp': _format_epoch_micros(station.first_data_timestamp()),
+        'last_data_timestamp': _format_epoch_micros(station.last_data_timestamp()),
+        'sensors': station_dict.get('sensors', []),
+        'errors': errors_dict.get('errors', []),
+        'error_count': errors_dict.get('num_errors', 0),
+    }
+
+
+def _summarize_data_window(data_window, metadata_path=None, cache_key: str = '') -> dict:
+    config = data_window.config()
+    errors_dict = data_window.errors().as_dict()
+    cache_dir = metadata_path.parent if metadata_path else (Path(data_window.save_dir()) if data_window.save_dir() else None)
+    saved_files = []
+    if cache_dir and cache_dir.exists():
+        saved_files = sorted(path.name for path in cache_dir.iterdir())
+    return {
+        'event_name': data_window.event_name,
+        'out_type': str(data_window.out_type()).upper(),
+        'sdk_version': data_window.sdk_version(),
+        'cache_key': cache_key,
+        'cache_dir': str(cache_dir) if cache_dir else '',
+        'metadata_path': str(metadata_path) if metadata_path else '',
+        'saved_artifact': '',
+        'saved_files': saved_files,
+        'station_count': len(data_window.stations()),
+        'station_ids': data_window.station_ids(),
+        'start_time': _format_epoch_micros(data_window.start_date()),
+        'end_time': _format_epoch_micros(data_window.end_date()),
+        'errors': errors_dict.get('errors', []),
+        'error_count': errors_dict.get('num_errors', 0),
+        'config': {
+            'input_dir': config.input_dir,
+            'structured_layout': config.structured_layout,
+            'start_datetime': _format_utc_datetime(config.start_datetime),
+            'end_datetime': _format_utc_datetime(config.end_datetime),
+            'start_buffer_seconds': f'{config.start_buffer_td.total_seconds():g}',
+            'end_buffer_seconds': f'{config.end_buffer_td.total_seconds():g}',
+            'drop_time_seconds': f'{config.drop_time_s:g}',
+            'station_ids': sorted(config.station_ids) if config.station_ids else [],
+            'apply_correction': config.apply_correction,
+            'use_model_correction': config.use_model_correction,
+            'copy_edge_points': config.copy_edge_points.name,
+        } if config else None,
+        'stations': [_summarize_station(station) for station in data_window.stations()],
+    }
+
+
+def _list_cached_data_windows():
+    cache_root = _data_window_cache_root()
+    if not cache_root.exists():
+        return []
+    entries = []
+    for child in sorted(cache_root.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True):
+        metadata_path = _find_data_window_metadata_file(child)
+        if metadata_path is None:
+            continue
+        try:
+            with open(metadata_path, 'r', encoding='utf-8') as file_obj:
+                metadata = json.load(file_obj)
+            config = metadata.get('config') if isinstance(metadata.get('config'), dict) else {}
+            errors_dict = metadata.get('errors') if isinstance(metadata.get('errors'), dict) else {}
+            entries.append({
+                'cache_key': child.name,
+                'display_name': metadata.get('event_name') or child.stem,
+                'out_type': str(metadata.get('out_type', 'UNKNOWN')).upper(),
+                'station_count': len(metadata.get('stations') or []),
+                'modified': _format_filesystem_datetime(metadata_path.stat().st_mtime),
+                'input_dir': config.get('input_dir', ''),
+                'metadata_name': metadata_path.name,
+                'location': str(child),
+                'errors': errors_dict.get('errors', []),
+            })
+        except Exception as exc:
+            entries.append({
+                'cache_key': child.name,
+                'display_name': child.stem,
+                'out_type': 'UNKNOWN',
+                'station_count': 0,
+                'modified': _format_filesystem_datetime(metadata_path.stat().st_mtime),
+                'input_dir': '',
+                'metadata_name': metadata_path.name,
+                'location': str(child),
+                'errors': [str(exc)],
+            })
+    return entries
+
+
+def _resolve_cached_data_window_metadata(cache_key: str) -> Path:
+    if not cache_key:
+        raise ValueError('Please choose a cached DataWindow to load.')
+    cache_root = _data_window_cache_root()
+    if not cache_root.exists():
+        raise FileNotFoundError('No cached DataWindows are available yet.')
+    root_resolved = cache_root.resolve()
+    candidate = (cache_root / cache_key).resolve()
+    if candidate != root_resolved and root_resolved not in candidate.parents:
+        raise ValueError('Invalid cached DataWindow selection.')
+    if not candidate.exists():
+        raise FileNotFoundError(f'Cached DataWindow not found: {cache_key}')
+    metadata_path = _find_data_window_metadata_file(candidate)
+    if metadata_path is None:
+        raise FileNotFoundError(f'No DataWindow metadata JSON found for cache entry: {cache_key}')
+    return metadata_path
+
+
+def _create_cached_data_window(form_values: dict) -> dict:
+    from redvox.common.data_window import DataWindow, DataWindowConfig
+    from redvox.common import gap_and_pad_utils as gpu
+
+    input_dir_raw = form_values.get('input_dir', '').strip()
+    if not input_dir_raw:
+        raise ValueError('Input directory is required.')
+    input_dir = Path(input_dir_raw).expanduser()
+    if not input_dir.exists() or not input_dir.is_dir():
+        raise ValueError(f'Input directory does not exist or is not a directory: {input_dir_raw}')
+
+    event_name = _sanitize_data_window_name(form_values.get('event_name') or input_dir.name or 'dw')
+    output_type = str(form_values.get('output_type', 'LZ4')).upper()
+    if output_type not in {'LZ4', 'JSON', 'PARQUET'}:
+        raise ValueError(f'Unsupported output type: {output_type}')
+
+    try:
+        copy_edge_points = gpu.DataPointCreationMode[form_values.get('copy_edge_points', 'COPY').upper()]
+    except KeyError as exc:
+        raise ValueError(f'Unsupported edge point mode: {form_values.get("copy_edge_points", "")}') from exc
+
+    cache_key = f'{event_name}_{datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")}_{uuid.uuid4().hex[:8]}'
+    output_dir = _data_window_cache_root(ensure_exists=True) / cache_key
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    config = DataWindowConfig(
+        input_dir=str(input_dir.resolve()),
+        structured_layout=form_values.get('structured_layout', True),
+        start_datetime=_parse_data_window_datetime(form_values.get('start_datetime', '')),
+        end_datetime=_parse_data_window_datetime(form_values.get('end_datetime', '')),
+        start_buffer_td=timedelta(seconds=float(form_values.get('start_buffer_seconds', '120'))),
+        end_buffer_td=timedelta(seconds=float(form_values.get('end_buffer_seconds', '120'))),
+        drop_time_s=float(form_values.get('drop_time_seconds', '0.2')),
+        station_ids=_parse_data_window_station_ids(form_values.get('station_ids', '')),
+        apply_correction=form_values.get('apply_correction', True),
+        use_model_correction=form_values.get('use_model_correction', True),
+        copy_edge_points=copy_edge_points,
+    )
+
+    original_cwd = os.getcwd()
+    try:
+        data_window = DataWindow(
+            event_name=event_name,
+            config=config,
+            output_dir=str(output_dir),
+            out_type=output_type,
+            make_runme=form_values.get('make_runme', False),
+            debug=form_values.get('debug', False),
+        )
+        saved_artifact = data_window.save()
+        metadata_path = _find_data_window_metadata_file(output_dir)
+        if metadata_path is None:
+            raise RuntimeError('DataWindow metadata JSON was not created.')
+        summary = _summarize_data_window(data_window, metadata_path=metadata_path, cache_key=cache_key)
+        summary['saved_artifact'] = str(saved_artifact) if saved_artifact else ''
+        return summary
+    finally:
+        os.chdir(original_cwd)
+
+
+def _load_cached_data_window_summary(cache_key: str) -> dict:
+    from redvox.common.data_window import DataWindow
+
+    metadata_path = _resolve_cached_data_window_metadata(cache_key)
+    original_cwd = os.getcwd()
+    try:
+        data_window = DataWindow.load(str(metadata_path))
+    finally:
+        os.chdir(original_cwd)
+    return _summarize_data_window(data_window, metadata_path=metadata_path, cache_key=cache_key)
 
 
 # ─── Dashboard ──────────────────────────────────────────────────────────────
@@ -265,20 +590,17 @@ def converter(request):
             out_dir = os.path.join(tmpdir, 'output')
             os.makedirs(out_dir, exist_ok=True)
 
-            cli_prefix = [sys.executable, '-m', 'redvox.cli.cli']
             cmd_map = {
-                'rdvxz_to_rdvxm': cli_prefix + ['rdvxz-to-rdvxm', '--out-dir', out_dir, in_path],
-                'rdvxm_to_rdvxz': cli_prefix + ['rdvxm-to-rdvxz', '--out-dir', out_dir, in_path],
-                'rdvxz_to_json': cli_prefix + ['rdvxz-to-json', '--out-dir', out_dir, in_path],
-                'rdvxm_to_json': cli_prefix + ['rdvxm-to-json', '--out-dir', out_dir, in_path],
-                'json_to_rdvxz': cli_prefix + ['json-to-rdvxz', '--out-dir', out_dir, in_path],
-                'json_to_rdvxm': cli_prefix + ['json-to-rdvxm', '--out-dir', out_dir, in_path],
+                'rdvxz_to_rdvxm': ['rdvxz-to-rdvxm', '--out-dir', out_dir, in_path],
+                'rdvxm_to_rdvxz': ['rdvxm-to-rdvxz', '--out-dir', out_dir, in_path],
+                'rdvxz_to_json': ['rdvxz-to-json', '--out-dir', out_dir, in_path],
+                'rdvxm_to_json': ['rdvxm-to-json', '--out-dir', out_dir, in_path],
+                'json_to_rdvxz': ['json-to-rdvxz', '--out-dir', out_dir, in_path],
+                'json_to_rdvxm': ['json-to-rdvxm', '--out-dir', out_dir, in_path],
             }
 
             try:
-                result = subprocess.run(
-                    cmd_map[action], capture_output=True, text=True, timeout=30
-                )
+                result = _run_redvox_cli(cmd_map[action], timeout=30)
                 out_files = list(Path(out_dir).glob('*'))
                 if out_files:
                     out_file = out_files[0]
@@ -323,10 +645,7 @@ def validator(request):
 
         try:
             if ext == '.rdvxm':
-                result = subprocess.run(
-                    [sys.executable, '-m', 'redvox.cli.cli', 'validate-m', tmp_path],
-                    capture_output=True, text=True, timeout=30
-                )
+                result = _run_redvox_cli(['validate-m', tmp_path], timeout=30)
             else:
                 # For API 900, just try to read it as validation
                 p = _read_rdvxz(tmp_path)
@@ -384,12 +703,10 @@ def cli_runner(request):
             context['error'] = 'No command selected.'
             return render(request, 'viewer/cli_runner.html', context)
 
-        full_cmd = [sys.executable, '-m', 'redvox.cli.cli'] + cmd.split() + (args.split() if args else [])
+        cli_args = cmd.split() + (args.split() if args else [])
         try:
-            result = subprocess.run(
-                full_cmd, capture_output=True, text=True, timeout=15
-            )
-            context['ran_cmd'] = ' '.join(full_cmd)
+            result = _run_redvox_cli(cli_args, timeout=15)
+            context['ran_cmd'] = ' '.join([sys.executable, '-m', 'redvox.cli.cli', *cli_args])
             context['stdout'] = result.stdout
             context['stderr'] = result.stderr
             context['returncode'] = result.returncode
@@ -650,6 +967,38 @@ def _analyze_rdvxm(path: str, filename: str) -> dict:
     return result
 
 
+def data_window(request):
+    context = {
+        'form_values': _default_data_window_form_values(),
+        'cache_entries': _list_cached_data_windows(),
+    }
+
+    if request.method == 'POST':
+        action = request.POST.get('action', 'create').strip().lower() or 'create'
+        try:
+            if action == 'load':
+                cache_key = request.POST.get('cache_key', '').strip()
+                summary = _load_cached_data_window_summary(cache_key)
+                context['data_window_summary'] = summary
+                context['selected_cache_key'] = summary.get('cache_key', cache_key)
+                context['success'] = f'Loaded DataWindow "{summary["event_name"]}".'
+            else:
+                form_values = _data_window_form_values(request.POST)
+                summary = _create_cached_data_window(form_values)
+                context['form_values'] = form_values
+                context['data_window_summary'] = summary
+                context['selected_cache_key'] = summary.get('cache_key')
+                context['success'] = f'Created DataWindow "{summary["event_name"]}".'
+        except Exception as e:
+            if action != 'load':
+                context['form_values'] = _data_window_form_values(request.POST)
+            context['error'] = str(e)
+            context['traceback'] = traceback.format_exc()
+        context['cache_entries'] = _list_cached_data_windows()
+
+    return render(request, 'viewer/data_window.html', context)
+
+
 # ─── RedVox Cloud ─────────────────────────────────────────────────────────────
 
 def cloud(request):
@@ -828,7 +1177,7 @@ def api_info(request):
         'version': redvox.VERSION,
         'api900_formats': ['.rdvxz'],
         'api1000_formats': ['.rdvxm'],
-        'features': ['inspect', 'convert', 'validate', 'analysis', 'cloud', 'samples'],
+        'features': ['inspect', 'convert', 'validate', 'analysis', 'data_window', 'cloud', 'samples'],
         'signal_analysis': ['waveform', 'fft', 'spectrogram'],
         'cloud_endpoints': [
             'authenticate', 'validate_token', 'station_stats',
