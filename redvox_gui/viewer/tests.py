@@ -285,3 +285,43 @@ class ViewerCliIntegrationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'usage: redvox-cli')
         run_redvox_cli.assert_called_once_with(['--help'], timeout=15)
+
+from django.contrib.auth.models import User
+from .models import DashboardShareToken
+
+class Phase2And3Tests(SimpleTestCase):
+    def setUp(self):
+        super().setUp()
+        self.client = self.client_class()
+        
+    def test_gis_filter_endpoint_post(self):
+        payload = {
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [-155.3, 19.3], [-155.1, 19.3],
+                    [-155.1, 19.5], [-155.3, 19.5], [-155.3, 19.3]
+                ]]
+            }
+        }
+        response = self.client.post(
+            '/api/gis/filter/', 
+            json.dumps(payload),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 200)
+        
+    def test_gis_filter_endpoint_requires_post(self):
+        response = self.client.get('/api/gis/filter/')
+        self.assertEqual(response.status_code, 405)
+        
+    def test_export_hdf5_endpoint(self):
+        response = self.client.get('/api/export/hdf5/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/x-hdf5')
+        
+    def test_export_netcdf_endpoint(self):
+        response = self.client.get('/api/export/netcdf/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/x-netcdf')

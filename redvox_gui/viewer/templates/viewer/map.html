@@ -42,13 +42,14 @@
         <div class="card">
             <div class="card-header bg-dark text-white">GIS Tools</div>
             <div class="card-body">
-                <form action="?kml=true" method="get">
+                <form action="{% url 'map_dashboard' %}" method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
                     <div class="mb-3">
                         <label class="form-label">Import KML/GMZ</label>
-                        <input type="file" class="form-control form-control-sm" accept=".kml,.gmz" disabled>
+                        <input type="file" name="kml_file" class="form-control form-control-sm" accept=".kml,.gmz" required>
                         <div class="form-text">Server-side processing of KML files.</div>
                     </div>
-                    <button type="submit" class="btn btn-primary btn-sm w-100" name="kml" value="true">Enable KML Layer</button>
+                    <button type="submit" class="btn btn-primary btn-sm w-100">Upload and Render KML</button>
                 </form>
             </div>
         </div>

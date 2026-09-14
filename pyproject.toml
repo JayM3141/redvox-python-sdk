@@ -33,6 +33,9 @@ dependencies = [
     "tomli-w==1.0.0",
     "websocket-client==1.8.0",
     "reportlab>=3.6.0",
+    "h5py>=3.11.0",
+    "netCDF4>=1.6.5",
+    "shapely>=2.0.4",
 ]
 
 [project.optional-dependencies]

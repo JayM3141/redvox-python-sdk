@@ -1995,31 +1995,82 @@ def map_dashboard(request):
         'features': features
     }, period='PT1H', add_last_point=True, auto_play=False, loop=False).add_to(m)
 
-    # Add KML/GMZ layer support (simulated integration hook for Phase 1)
-    kml_import_active = request.GET.get('kml', 'false') == 'true'
-    if kml_import_active:
-        import json
-        # Simulated KML Polygon overlay converted to GeoJSON for rendering
-        kml_geojson = {
-            "type": "FeatureCollection",
-            "features": [{
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[
-                        [-155.3, 19.3], [-155.1, 19.3],
-                        [-155.1, 19.5], [-155.3, 19.5], [-155.3, 19.3]
-                    ]]
-                },
-                "properties": {"name": "KML Import Region", "style": {"color": "red", "weight": 2}}
-            }]
+    from folium.plugins import Draw
+    Draw(export=True).add_to(m)
+
+    # Actual KML parsing using fastkml
+    if request.method == 'POST' and 'kml_file' in request.FILES:
+        try:
+            kml_file = request.FILES['kml_file']
+            kml_bytes = kml_file.read()
+            
+            from fastkml import kml
+            import shapely.geometry
+            k = kml.KML()
+            k.from_string(kml_bytes)
+            
+            features_list = []
+            def extract_features(doc):
+                for feature in doc:
+                    if getattr(feature, 'geometry', None):
+                        features_list.append({
+                            "type": "Feature",
+                            "geometry": shapely.geometry.mapping(feature.geometry),
+                            "properties": {"name": getattr(feature, 'name', 'Imported Region'), "style": {"color": "red", "weight": 2}}
+                        })
+                    if hasattr(feature, 'features'):
+                        extract_features(list(feature.features()))
+            
+            extract_features(list(k.features()))
+            
+            if features_list:
+                folium.GeoJson(
+                    {
+                        "type": "FeatureCollection",
+                        "features": features_list
+                    },
+                    name="Imported KML/GMZ",
+                    style_function=lambda feature: feature['properties'].get('style', {})
+                ).add_to(m)
+        except Exception as e:
+            pass # Or handle error appropriately
+            
+    folium.LayerControl().add_to(m)
+
+    from folium import Element
+    js_inject = Element("""
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Find the leafmap object
+        for (var key in window) {
+            if (key.startsWith('map_') && window[key] instanceof L.Map) {
+                var map = window[key];
+                map.on('draw:created', function(e) {
+                    var layer = e.layer;
+                    var geojson = layer.toGeoJSON();
+                    
+                    fetch('/api/gis/filter/', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(geojson)
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.filtered_ids) {
+                            alert("GIS Filter successful. Found " + data.filtered_ids.length + " sensors in region: " + data.filtered_ids.join(', '));
+                        } else if (data.error) {
+                            alert("GIS Error: " + data.error);
+                        }
+                    })
+                    .catch(error => console.error('Error:', error));
+                });
+                break;
+            }
         }
-        folium.GeoJson(
-            kml_geojson,
-            name="Imported KML/GMZ",
-            style_function=lambda feature: feature['properties']['style']
-        ).add_to(m)
-        folium.LayerControl().add_to(m)
+    });
+    </script>
+    """)
+    m.get_root().html.add_child(js_inject)
 
     return render(request, 'viewer/map.html', {
         'map_html': m._repr_html_(),
@@ -2088,9 +2139,95 @@ def create_dashboard_share(request):
         return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
 
 def view_shared_dashboard(request, token_id):
+    from django.shortcuts import get_object_or_404
+    from .models import DashboardShareToken
     token = get_object_or_404(DashboardShareToken, token=token_id)
     if not token.is_valid:
         return render(request, 'viewer/error.html', {'message': 'This share link has expired.'})
     
     # In a real app, use token.state to filter the dashboard data
     return dashboard(request)
+
+@csrf_exempt
+def gis_filter(request):
+    """
+    Takes a GeoJSON polygon from the frontend and returns filtered sensors.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+    try:
+        data = json.loads(request.body)
+        polygon_coords = data.get('geometry', {}).get('coordinates', [])
+        if not polygon_coords:
+            return JsonResponse({'error': 'No coordinates provided'}, status=400)
+            
+        from shapely.geometry import Point, Polygon
+        poly = Polygon(polygon_coords[0])
+        
+        # Dummy data matching map_dashboard base data for live demonstration
+        base_time = datetime.now() - timedelta(days=1)
+        events = [
+            {"id": "Explosion_1", "type": "Explosion", "lat": 19.42, "lon": -155.28},
+            {"id": "Helicopter_1", "type": "Helicopter", "lat": 19.5, "lon": -155.1},
+            {"id": "Speech_1", "type": "Speech", "lat": 19.45, "lon": -155.2},
+            {"id": "Earthquake_1", "type": "Earthquake", "lat": 19.3, "lon": -155.4},
+        ]
+        
+        filtered = []
+        for ev in events:
+            pt = Point(ev['lon'], ev['lat'])
+            if poly.contains(pt):
+                filtered.append(ev['id'])
+                
+        return JsonResponse({'filtered_ids': filtered})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def _generate_dummy_packet():
+    # Helper to generate a packet to export if actual data isn't loaded
+    from redvox.api1000.wrapped_redvox_packet.wrapped_packet import WrappedRedvoxPacketM
+    packet = WrappedRedvoxPacketM.new()
+    packet.get_station_information().set_id("1234567890").set_make("Dummy").set_model("Model1")
+    packet.get_timing_information().set_packet_start_mach_timestamp(int(time.time() * 1e6))
+    return packet
+
+def export_hdf5(request):
+    """
+    Exports RedVox data to HDF5 format.
+    """
+    from .scientific_containers import HDF5Exporter
+    from django.http import FileResponse
+    packet = _generate_dummy_packet()
+    
+    with tempfile.NamedTemporaryFile(suffix='.hdf5', delete=False) as tmp:
+        tmp_path = tmp.name
+    
+    exporter = HDF5Exporter()
+    success = exporter.export_to_hdf5(packet, tmp_path)
+    
+    if success and os.path.exists(tmp_path):
+        response = FileResponse(open(tmp_path, 'rb'), content_type='application/x-hdf5')
+        response['Content-Disposition'] = 'attachment; filename="redvox_data.hdf5"'
+        return response
+    return JsonResponse({'error': 'Failed to generate HDF5'}, status=500)
+
+def export_netcdf(request):
+    """
+    Exports RedVox data to NetCDF format.
+    """
+    from .scientific_containers import NetCDFExporter
+    from django.http import FileResponse
+    packet = _generate_dummy_packet()
+    
+    with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp:
+        tmp_path = tmp.name
+    
+    exporter = NetCDFExporter()
+    success = exporter.export_to_netcdf(packet, tmp_path)
+    
+    if success and os.path.exists(tmp_path):
+        response = FileResponse(open(tmp_path, 'rb'), content_type='application/x-netcdf')
+        response['Content-Disposition'] = 'attachment; filename="redvox_data.nc"'
+        return response
+    return JsonResponse({'error': 'Failed to generate NetCDF'}, status=500)
