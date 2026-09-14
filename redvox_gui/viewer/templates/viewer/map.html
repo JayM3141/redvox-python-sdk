@@ -45,11 +45,11 @@
                 <form action="{% url 'map_dashboard' %}" method="post" enctype="multipart/form-data">
                     {% csrf_token %}
                     <div class="mb-3">
-                        <label class="form-label">Import KML/GMZ</label>
-                        <input type="file" name="kml_file" class="form-control form-control-sm" accept=".kml,.gmz" required>
-                        <div class="form-text">Server-side processing of KML files.</div>
+                        <label for="kml_file_input" class="form-label">Import KML/GMZ</label>
+                        <input type="file" id="kml_file_input" name="kml_file" class="form-control form-control-sm" accept=".kml,.gmz" aria-describedby="kml_help_text" required>
+                        <div id="kml_help_text" class="form-text">Server-side processing of KML files.</div>
                     </div>
-                    <button type="submit" class="btn btn-primary btn-sm w-100">Upload and Render KML</button>
+                    <button type="submit" class="btn btn-primary btn-sm w-100" aria-label="Upload and Render KML">Upload and Render KML</button>
                 </form>
             </div>
         </div>

@@ -99,8 +99,8 @@
                 <div class="fs-1 mb-3">🧠</div>
                 <h5 class="card-title fw-bold">Machine Learning</h5>
                 <p class="card-text text-muted small">Run YAMNet audio classification on sensor data asynchronously using Redis caching.</p>
-                <button onclick="runML()" class="btn btn-primary w-100 mt-2" id="ml-btn">Trigger Audio ML</button>
-                <div id="ml-result" class="mt-3 small text-start p-2 bg-light rounded" style="display:none; max-height:150px; overflow-y:auto;"></div>
+                <button onclick="runML()" class="btn btn-primary w-100 mt-2" id="ml-btn" aria-controls="ml-result">Trigger Audio ML</button>
+                <div id="ml-result" class="mt-3 small text-start p-2 bg-light rounded" style="display:none; max-height:150px; overflow-y:auto;" aria-live="polite" aria-atomic="true"></div>
             </div>
         </div>
     </div>
@@ -108,12 +108,12 @@
     <div class="col-md-6 col-lg-6">
         <div class="card h-100 border-success">
             <div class="card-body text-center p-4">
-                <div class="fs-1 mb-3">☁️</div>
+                <div class="fs-1 mb-3" aria-hidden="true">☁️</div>
                 <h5 class="card-title fw-bold">Cloud Export</h5>
                 <p class="card-text text-muted small">Generate HDF5 and NetCDF and offload immediately to AWS S3 or GCP Cloud Storage.</p>
                 <div class="d-flex gap-2 mt-2">
-                    <button onclick="runCloud('aws')" class="btn btn-outline-success w-50">Upload S3</button>
-                    <button onclick="runCloud('gcp')" class="btn btn-outline-success w-50">Upload GCP</button>
+                    <button onclick="runCloud('aws')" class="btn btn-outline-success w-50" aria-label="Upload to AWS S3">Upload S3</button>
+                    <button onclick="runCloud('gcp')" class="btn btn-outline-success w-50" aria-label="Upload to Google Cloud Storage">Upload GCP</button>
                 </div>
             </div>
         </div>
