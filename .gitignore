@@ -37,3 +37,4 @@ redvox_gui/sessions/
 # Misc
 *.orig
 .replit
+db.sqlite3

@@ -33,11 +33,12 @@
                 <div class="mt-3">
                     <div class="small text-muted fw-bold mb-1">ANALYSIS INCLUDES</div>
                     <ul class="small text-muted ps-3 mb-0">
-                        <li>Waveform plot</li>
-                        <li>FFT frequency spectrum</li>
-                        <li>Spectrogram (time-frequency)</li>
+                        <li>All available sensor data</li>
+                        <li>Waveform plot (audio)</li>
+                        <li>FFT frequency spectrum (audio)</li>
+                        <li>Spectrogram (time-frequency) (audio)</li>
                         <li>Statistical summary</li>
-                        <li>Peak frequency detection</li>
+                        <li>Peak frequency detection (audio)</li>
                     </ul>
                 </div>
 
@@ -47,6 +48,64 @@
                         <i class="bi bi-folder2-open me-1"></i>Browse Samples
                     </a>
                 </div>
+
+                <div class="mt-3">
+                    <div class="small text-muted fw-bold mb-1">BULK PROCESSING</div>
+                    <button type="button" class="btn btn-sm btn-outline-info w-100" data-bs-toggle="modal" data-bs-target="#bulkProcessModal">
+                        <i class="bi bi-folder me-1"></i>Process Directory
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bulk Processing Modal -->
+    <div class="modal fade" id="bulkProcessModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content bg-dark text-white">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-folder me-2"></i>Bulk Process Directory</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="bulkProcessForm">
+                        <div class="mb-3">
+                            <label class="form-label small">Directory Path</label>
+                            <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary" 
+                                   id="bulkDirectory" placeholder="C:\path\to\directory" required>
+                        </div>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="bulkRecursive" checked>
+                                <label class="form-check-label small" for="bulkRecursive">
+                                    Include subdirectories (recursive)
+                                </label>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">Export Format</label>
+                            <select class="form-select form-select-sm bg-dark text-white border-secondary" id="bulkExportFormat">
+                                <option value="json">JSON (preview)</option>
+                                <option value="csv">CSV</option>
+                                <option value="excel">Excel (.xlsx)</option>
+                                <option value="parquet">Parquet</option>
+                            </select>
+                        </div>
+                        <div id="bulkProcessStatus" class="small text-info d-none">
+                            <i class="bi bi-arrow-repeat spin me-2"></i>Processing...
+                        </div>
+                        <div id="bulkProcessResults" class="small mt-2 d-none"></div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="processBulkDirectory()">
+                        <i class="bi bi-play me-2"></i>Process
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
             </div>
         </div>
     </div>
@@ -95,6 +154,37 @@
                             {% endif %}
                         </div>
 
+                        {% if hardware_info %}
+                        <hr class="my-3">
+                        <div class="small text-muted fw-bold mb-2">HARDWARE INFORMATION</div>
+                        <div class="row g-2">
+                            <div class="col-sm-6 col-md-4">
+                                <div style="font-size:0.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">Device</div>
+                                <div class="fw-bold" style="font-size:0.85rem">{{ hardware_info.device_hardware.make }} {{ hardware_info.device_hardware.model }}</div>
+                            </div>
+                            <div class="col-sm-6 col-md-4">
+                                <div style="font-size:0.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">OS</div>
+                                <div class="fw-bold" style="font-size:0.85rem">{{ hardware_info.device_hardware.os }} {{ hardware_info.device_hardware.os_version }}</div>
+                            </div>
+                            <div class="col-sm-6 col-md-4">
+                                <div style="font-size:0.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">App Version</div>
+                                <div class="fw-bold" style="font-size:0.85rem">{{ hardware_info.device_hardware.app_version }}</div>
+                            </div>
+                            <div class="col-sm-6 col-md-4">
+                                <div style="font-size:0.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">Sampling Rate</div>
+                                <div class="fw-bold" style="font-size:0.85rem">{{ hardware_info.sensor_configuration.audio_sampling_rate }}</div>
+                            </div>
+                            <div class="col-sm-6 col-md-4">
+                                <div style="font-size:0.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">Audio Tuning</div>
+                                <div class="fw-bold" style="font-size:0.85rem">{{ hardware_info.sensor_configuration.audio_source_tuning }}</div>
+                            </div>
+                            <div class="col-sm-6 col-md-4">
+                                <div style="font-size:0.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">Sensors</div>
+                                <div class="fw-bold" style="font-size:0.85rem">{{ hardware_info.sensor_configuration.additional_input_sensors|join:", " }}</div>
+                            </div>
+                        </div>
+                        {% endif %}
+
                         {% if audio_url %}
                         <hr class="my-3">
                         <div class="small text-muted fw-bold mb-2">AUDIO PLAYBACK</div>
@@ -134,6 +224,70 @@
         </div>
         {% endif %}
 
+        {% if heatmap_img %}
+        <div class="card mb-3 border-info">
+            <div class="card-header bg-info text-dark fw-bold"><i class="bi bi-intersect me-2"></i>Cross-Sensor Correlation Heatmap</div>
+            <div class="card-body p-2 bg-dark">
+                <img src="data:image/png;base64,{{ heatmap_img }}" class="analysis-img border-0" alt="Correlation Heatmap">
+            </div>
+        </div>
+        {% endif %}
+
+        {% if heatmap_error %}
+        <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle me-2"></i>Heatmap Generation Failed: {{ heatmap_error }}
+        </div>
+        {% endif %}
+
+        {% if sensors %}
+        <div class="card mb-3">
+            <div class="card-header bg-dark text-white"><i class="bi bi-cpu me-2"></i>All Sensor Data</div>
+            <div class="card-body bg-light">
+                {% for sensor in sensors %}
+                <div class="mb-4">
+                    <h6 class="fw-bold text-dark mb-2">{{ sensor.sensor_name }}</h6>
+                    {% if sensor.error %}
+                    <div class="alert alert-warning small mb-2">{{ sensor.error }}</div>
+                    {% else %}
+                    {% if sensor.stats %}
+                    <div class="row g-2 mb-2">
+                        {% for key, val in sensor.stats.items %}
+                        <div class="col-sm-6 col-md-4">
+                            <div style="font-size:0.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">{{ key }}</div>
+                            <div class="fw-bold" style="font-size:0.85rem">{{ val }}</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if sensor.timeseries_img %}
+                    <div class="card mb-2">
+                        <div class="card-body p-2">
+                            <img src="data:image/png;base64,{{ sensor.timeseries_img }}" class="analysis-img" alt="{{ sensor.sensor_name }} Time Series">
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% if sensor.xyz_timeseries_img %}
+                    <div class="card mb-2">
+                        <div class="card-body p-2">
+                            <img src="data:image/png;base64,{{ sensor.xyz_timeseries_img }}" class="analysis-img" alt="{{ sensor.sensor_name }} XYZ Time Series">
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% if sensor.location_map_img %}
+                    <div class="card mb-2">
+                        <div class="card-body p-2">
+                            <img src="data:image/png;base64,{{ sensor.location_map_img }}" class="analysis-img" alt="{{ sensor.sensor_name }} Location Map">
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% endif %}
+                    {% if not loop.last %}<hr class="border-secondary">{% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
         {% else %}
         {% if not error and not warning %}
         <div class="card text-center p-5">
@@ -145,4 +299,101 @@
         {% endif %}
     </div>
 </div>
+
+<script>
+async function processBulkDirectory() {
+    const directory = document.getElementById('bulkDirectory').value;
+    const recursive = document.getElementById('bulkRecursive').checked;
+    const exportFormat = document.getElementById('bulkExportFormat').value;
+    const statusDiv = document.getElementById('bulkProcessStatus');
+    const resultsDiv = document.getElementById('bulkProcessResults');
+    
+    if (!directory) {
+        alert('Please enter a directory path');
+        return;
+    }
+    
+    statusDiv.classList.remove('d-none');
+    resultsDiv.classList.add('d-none');
+    
+    try {
+        const response = await fetch('/viewer/api/bulk_process/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                directory: directory,
+                recursive: recursive,
+                export_format: exportFormat
+            })
+        });
+        
+        const data = await response.json();
+        
+        statusDiv.classList.add('d-none');
+        resultsDiv.classList.remove('d-none');
+        
+        if (data.success) {
+            if (data.export_url) {
+                resultsDiv.innerHTML = `
+                    <div class="text-success">
+                        <i class="bi bi-check-circle me-2"></i>
+                        Processing complete! 
+                        <a href="${data.export_url}" class="btn btn-sm btn-success ms-2">
+                            <i class="bi bi-download me-1"></i>Download Export
+                        </a>
+                    </div>
+                    <div class="mt-2">
+                        <small>Files processed: ${data.stats.total_files} | 
+                              Successful: ${data.stats.successful} | 
+                              Failed: ${data.stats.failed}</small>
+                    </div>
+                `;
+            } else {
+                resultsDiv.innerHTML = `
+                    <div class="text-success">
+                        <i class="bi bi-check-circle me-2"></i>
+                        Processing complete!
+                    </div>
+                    <div class="mt-2">
+                        <small>Files processed: ${data.stats.total_files} | 
+                              Successful: ${data.stats.successful} | 
+                              Failed: ${data.stats.failed}</small>
+                    </div>
+                    <div class="mt-2">
+                        <details>
+                            <summary class="cursor-pointer">View Results (${data.results.length} files)</summary>
+                            <pre class="bg-dark text-white p-2 mt-2" style="max-height: 200px; overflow-y: auto;">${JSON.stringify(data.results, null, 2)}</pre>
+                        </details>
+                    </div>
+                `;
+            }
+        } else {
+            resultsDiv.innerHTML = `<div class="text-danger"><i class="bi bi-exclamation-triangle me-2"></i>${data.error}</div>`;
+        }
+    } catch (error) {
+        statusDiv.classList.add('d-none');
+        resultsDiv.classList.remove('d-none');
+        resultsDiv.innerHTML = `<div class="text-danger"><i class="bi bi-exclamation-triangle me-2"></i>Error: ${error.message}</div>`;
+    }
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+</script>
+
 {% endblock %}

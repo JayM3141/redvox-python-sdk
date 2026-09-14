@@ -16,6 +16,17 @@ import numpy as np
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
 from django.conf import settings
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
+from .bulk_processing import BulkProcessor
+from .ml_integration import MultiSensorClassifier, extract_sensor_data_for_ml, SensorEventClassifier
+from .report_generator import ReportGenerator
+from .ml_framework import RedVoxMLFramework
+from .video_generator import generate_scientific_video
+from .visualization_3d import generate_3d_visualizations
+from .analytics import AdvancedAnalytics
+from .device_manager import get_device_manager
+from .scientific_containers import export_to_scientific_container
 
 REDVOX_REPO_ROOT = Path(getattr(settings, 'REPO_ROOT', Path(__file__).resolve().parents[2]))
 
@@ -539,8 +550,17 @@ def _inspect_rdvxm_file(path: str) -> dict:
             ('Auth ID', si.get_auth_id()),
             ('Start Timestamp', start_ts_human),
             ('Server Acquire Time', server_acq_human),
+            ('Audio Sampling Rate', str(si.get_app_settings().get_audio_sampling_rate())),
+            ('Audio Source Tuning', str(si.get_app_settings().get_audio_source_tuning())),
+            ('Storage Allowance', f"{si.get_app_settings().get_storage_space_allowance() / 1e9:.1f} GB"),
         ],
         'sensors': sensors,
+        'hardware_config': {
+            'additional_sensors': [str(s) for s in si.get_app_settings().get_additional_input_sensors().get_values()],
+            'fft_overlap': str(si.get_app_settings().get_fft_overlap()),
+            'auto_record': si.get_app_settings().get_automatically_record(),
+            'location_services': si.get_app_settings().get_use_location_services(),
+        },
     }
 
 
@@ -764,7 +784,15 @@ def _analyze_rdvxz(path: str, filename: str) -> dict:
                 'Example: pip install matplotlib'
             ),
         }
-    from scipy import signal as scipy_signal
+    
+    try:
+        from scipy import signal as scipy_signal
+    except ImportError:
+        return {
+            'filename': filename,
+            'api': 'API 900',
+            'error': 'scipy module not installed. Install scipy to enable spectrogram generation. Example: pip install scipy',
+        }
 
     p = _read_rdvxz(path)
     result = {'filename': filename, 'api': 'API 900'}
@@ -843,6 +871,196 @@ def _analyze_rdvxz(path: str, filename: str) -> dict:
     return result
 
 
+def _extract_hardware_info(packet, filename: str) -> dict:
+    """Extract comprehensive hardware and device information from the packet."""
+    try:
+        station_info = packet.get_station_information()
+        hardware_info = {
+            'filename': filename,
+            'device_hardware': {
+                'station_id': station_info.get_id(),
+                'uuid': station_info.get_uuid(),
+                'make': station_info.get_make(),
+                'model': station_info.get_model(),
+                'os': station_info.get_os(),
+                'os_version': station_info.get_os_version(),
+                'app_version': station_info.get_app_version(),
+                'is_private': station_info.get_is_private(),
+            },
+            'sensor_configuration': {
+                'audio_sampling_rate': str(station_info.get_app_settings().get_audio_sampling_rate()),
+                'audio_source_tuning': str(station_info.get_app_settings().get_audio_source_tuning()),
+                'additional_input_sensors': [str(sensor) for sensor in station_info.get_app_settings().get_additional_input_sensors().get_values()],
+                'fft_overlap': str(station_info.get_app_settings().get_fft_overlap()),
+                'samples_per_window': station_info.get_app_settings().get_samples_per_window(),
+            },
+            'device_state': {
+                'automatically_record': station_info.get_app_settings().get_automatically_record(),
+                'storage_space_allowance': station_info.get_app_settings().get_storage_space_allowance(),
+                'use_location_services': station_info.get_app_settings().get_use_location_services(),
+                'use_sd_card': station_info.get_app_settings().get_use_sd_card_for_data_storage(),
+            },
+            'timing_info': {
+                'packet_start_mach_time': packet.get_timing_information().get_packet_start_mach(),
+                'packet_start_os': packet.get_timing_information().get_packet_start_os(),
+                'packet_end_mach_time': packet.get_timing_information().get_packet_end_mach(),
+                'packet_end_os': packet.get_timing_information().get_packet_end_os(),
+            }
+        }
+        
+        # Add station metrics if available
+        if station_info.has_station_metrics():
+            metrics = station_info.get_station_metrics()
+            if metrics.has_timestamps():
+                ts = metrics.get_timestamps()
+                hardware_info['performance_metrics'] = {
+                    'metrics_rate': str(metrics.get_metrics_rate()),
+                    'timestamp_count': ts.get_timestamps().__len__(),
+                    'mean_sample_rate': ts.get_mean_sample_rate(),
+                    'stdev_sample_rate': ts.get_stdev_sample_rate(),
+                }
+        
+        return hardware_info
+    except Exception as e:
+        return {'filename': filename, 'error': f'Hardware extraction failed: {str(e)}'}
+
+
+def _extract_sensor_data(sensor_obj, sensor_name: str, filename: str) -> dict:
+    """Extract and visualize data from a single sensor."""
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+    except ModuleNotFoundError:
+        return {'sensor_name': sensor_name, 'error': 'matplotlib not installed'}
+
+    result = {'sensor_name': sensor_name}
+    
+    # Check if sensor has single value samples (like temperature, pressure, etc.)
+    if hasattr(sensor_obj, 'get_samples'):
+        samples = np.array(sensor_obj.get_samples().get_values(), dtype=np.float64)
+        if len(samples) == 0:
+            return {'sensor_name': sensor_name, 'error': 'No data available'}
+        
+        # Get timestamps
+        timestamps = np.array(sensor_obj.get_timestamps().get_timestamps(), dtype=np.float64)
+        if len(timestamps) == 0:
+            timestamps = np.arange(len(samples))
+        
+        # Convert to relative time in seconds
+        if len(timestamps) > 0:
+            time_axis = (timestamps - timestamps[0]) / 1e9  # Convert nanoseconds to seconds
+        else:
+            time_axis = np.arange(len(samples))
+        
+        result['stats'] = {
+            'Num Samples': len(samples),
+            'Min Value': f'{samples.min():.4f}',
+            'Max Value': f'{samples.max():.4f}',
+            'Mean': f'{samples.mean():.4f}',
+            'Std Dev': f'{samples.std():.4f}',
+        }
+        
+        # Time series plot
+        fig, ax = plt.subplots(figsize=(10, 2.5))
+        ax.plot(time_axis, samples, color='#89b4fa', linewidth=0.5)
+        ax.set_xlabel('Time (s)', color='#cdd6f4')
+        ax.set_ylabel(sensor_name, color='#cdd6f4')
+        ax.set_title(f'{sensor_name} — {filename}', color='#cdd6f4')
+        ax.tick_params(colors='#cdd6f4')
+        for spine in ax.spines.values():
+            spine.set_color('#313244')
+        fig.patch.set_facecolor('#1e1e2e')
+        ax.set_facecolor('#181825')
+        result['timeseries_img'] = _b64_figure(fig)
+        plt.close(fig)
+        
+        return result
+    
+    # Check if sensor has XYZ data (like accelerometer, gyroscope, etc.)
+    elif hasattr(sensor_obj, 'get_x_samples'):
+        x_samples = np.array(sensor_obj.get_x_samples().get_values(), dtype=np.float64)
+        y_samples = np.array(sensor_obj.get_y_samples().get_values(), dtype=np.float64)
+        z_samples = np.array(sensor_obj.get_z_samples().get_values(), dtype=np.float64)
+        
+        if len(x_samples) == 0:
+            return {'sensor_name': sensor_name, 'error': 'No data available'}
+        
+        # Get timestamps
+        timestamps = np.array(sensor_obj.get_timestamps().get_timestamps(), dtype=np.float64)
+        if len(timestamps) == 0:
+            timestamps = np.arange(len(x_samples))
+        
+        # Convert to relative time in seconds
+        if len(timestamps) > 0:
+            time_axis = (timestamps - timestamps[0]) / 1e9
+        else:
+            time_axis = np.arange(len(x_samples))
+        
+        result['stats'] = {
+            'Num Samples': len(x_samples),
+            'X Min/Max': f'{x_samples.min():.4f} / {x_samples.max():.4f}',
+            'Y Min/Max': f'{y_samples.min():.4f} / {y_samples.max():.4f}',
+            'Z Min/Max': f'{z_samples.min():.4f} / {z_samples.max():.4f}',
+        }
+        
+        # XYZ time series plot
+        fig, ax = plt.subplots(figsize=(10, 3))
+        ax.plot(time_axis, x_samples, color='#f38ba8', linewidth=0.5, label='X')
+        ax.plot(time_axis, y_samples, color='#a6e3a1', linewidth=0.5, label='Y')
+        ax.plot(time_axis, z_samples, color='#89b4fa', linewidth=0.5, label='Z')
+        ax.set_xlabel('Time (s)', color='#cdd6f4')
+        ax.set_ylabel(sensor_name, color='#cdd6f4')
+        ax.set_title(f'{sensor_name} — {filename}', color='#cdd6f4')
+        ax.legend(facecolor='#1e1e2e', edgecolor='#313244', labelcolor='#cdd6f4')
+        ax.tick_params(colors='#cdd6f4')
+        for spine in ax.spines.values():
+            spine.set_color('#313244')
+        fig.patch.set_facecolor('#1e1e2e')
+        ax.set_facecolor('#181825')
+        result['xyz_timeseries_img'] = _b64_figure(fig)
+        plt.close(fig)
+        
+        return result
+    
+    # Check if sensor has location data
+    elif hasattr(sensor_obj, 'get_latitude_samples'):
+        lat_samples = np.array(sensor_obj.get_latitude_samples().get_values(), dtype=np.float64)
+        lon_samples = np.array(sensor_obj.get_longitude_samples().get_values(), dtype=np.float64)
+        alt_samples = np.array(sensor_obj.get_altitude_samples().get_values(), dtype=np.float64)
+        
+        if len(lat_samples) == 0:
+            return {'sensor_name': sensor_name, 'error': 'No data available'}
+        
+        result['stats'] = {
+            'Num Points': len(lat_samples),
+            'Lat Range': f'{lat_samples.min():.6f} / {lat_samples.max():.6f}',
+            'Lon Range': f'{lon_samples.min():.6f} / {lon_samples.max():.6f}',
+            'Alt Range': f'{alt_samples.min():.2f} / {alt_samples.max():.2f} m',
+        }
+        
+        # Location plot (latitude vs longitude)
+        fig, ax = plt.subplots(figsize=(10, 3))
+        ax.scatter(lon_samples, lat_samples, c=alt_samples, cmap='viridis', s=10)
+        ax.set_xlabel('Longitude', color='#cdd6f4')
+        ax.set_ylabel('Latitude', color='#cdd6f4')
+        ax.set_title(f'Location — {filename}', color='#cdd6f4')
+        cbar = plt.colorbar(ax.collections[0], ax=ax)
+        cbar.set_label('Altitude (m)', color='#cdd6f4')
+        cbar.ax.yaxis.set_tick_params(colors='#cdd6f4')
+        ax.tick_params(colors='#cdd6f4')
+        for spine in ax.spines.values():
+            spine.set_color('#313244')
+        fig.patch.set_facecolor('#1e1e2e')
+        ax.set_facecolor('#181825')
+        result['location_map_img'] = _b64_figure(fig)
+        plt.close(fig)
+        
+        return result
+    
+    return {'sensor_name': sensor_name, 'error': 'Unknown sensor type'}
+
+
 def _analyze_rdvxm(path: str, filename: str) -> dict:
     try:
         import matplotlib
@@ -857,24 +1075,78 @@ def _analyze_rdvxm(path: str, filename: str) -> dict:
                 'Example: pip install matplotlib'
             ),
         }
-    from scipy import signal as scipy_signal
+    
+    try:
+        from scipy import signal as scipy_signal
+    except ImportError:
+        return {
+            'filename': filename,
+            'api': 'API 1000/M',
+            'error': 'scipy module not installed. Install scipy to enable spectrogram generation. Example: pip install scipy',
+        }
 
     p = _read_rdvxm(path)
     sensors_obj = p.get_sensors()
-    result = {'filename': filename, 'api': 'API 1000/M'}
+    result = {'filename': filename, 'api': 'API 1000/M', 'sensors': []}
+    
+    # Extract hardware information
+    hardware_info = _extract_hardware_info(p, filename)
+    result['hardware_info'] = hardware_info
 
-    if not sensors_obj.has_audio():
-        result['warning'] = 'No audio sensor found. Cannot perform audio analysis.'
-        # Try pressure analysis
-        if sensors_obj.has_pressure():
-            press = sensors_obj.get_pressure()
-            samples = np.array(press.get_samples().get_values(), dtype=np.float64)
-            sr = press.get_sample_rate()
-            result['warning'] = None
-            result['sensor_used'] = 'Pressure (Barometer)'
-        else:
-            return result
-    else:
+    # Extract all available sensors
+    sensor_mapping = {
+        'accelerometer': sensors_obj.has_accelerometer,
+        'ambient_temperature': sensors_obj.has_ambient_temperature,
+        'audio': sensors_obj.has_audio,
+        'compressed_audio': sensors_obj.has_compressed_audio,
+        'gravity': sensors_obj.has_gravity,
+        'gyroscope': sensors_obj.has_gyroscope,
+        'image': sensors_obj.has_image,
+        'light': sensors_obj.has_light,
+        'linear_acceleration': sensors_obj.has_linear_acceleration,
+        'location': sensors_obj.has_location,
+        'magnetometer': sensors_obj.has_magnetometer,
+        'orientation': sensors_obj.has_orientation,
+        'pressure': sensors_obj.has_pressure,
+        'proximity': sensors_obj.has_proximity,
+        'relative_humidity': sensors_obj.has_relative_humidity,
+        'rotation_vector': sensors_obj.has_rotation_vector,
+        'velocity': sensors_obj.has_velocity,
+    }
+
+    sensor_getters = {
+        'accelerometer': sensors_obj.get_accelerometer,
+        'ambient_temperature': sensors_obj.get_ambient_temperature,
+        'audio': sensors_obj.get_audio,
+        'compressed_audio': sensors_obj.get_compressed_audio,
+        'gravity': sensors_obj.get_gravity,
+        'gyroscope': sensors_obj.get_gyroscope,
+        'image': sensors_obj.get_image,
+        'light': sensors_obj.get_light,
+        'linear_acceleration': sensors_obj.get_linear_acceleration,
+        'location': sensors_obj.get_location,
+        'magnetometer': sensors_obj.get_magnetometer,
+        'orientation': sensors_obj.get_orientation,
+        'pressure': sensors_obj.get_pressure,
+        'proximity': sensors_obj.get_proximity,
+        'relative_humidity': sensors_obj.get_relative_humidity,
+        'rotation_vector': sensors_obj.get_rotation_vector,
+        'velocity': sensors_obj.get_velocity,
+    }
+
+    for sensor_name, has_sensor in sensor_mapping.items():
+        if has_sensor():
+            sensor_obj = sensor_getters[sensor_name]()
+            sensor_data = _extract_sensor_data(sensor_obj, sensor_name.replace('_', ' ').title(), filename)
+            result['sensors'].append(sensor_data)
+
+    # If no sensors found, return error
+    if not result['sensors']:
+        result['error'] = 'No sensors found in this file'
+        return result
+
+    # Perform audio analysis if audio sensor is available (for backward compatibility)
+    if sensors_obj.has_audio():
         audio = sensors_obj.get_audio()
         samples = np.array(audio.get_samples().get_values(), dtype=np.float64)
         sr = float(audio.get_sample_rate())
@@ -900,71 +1172,537 @@ def _analyze_rdvxm(path: str, filename: str) -> dict:
             # Audio playback is optional; ignore failures and continue analysis.
             pass
 
-    duration = len(samples) / sr if sr > 0 else 0
-    t = np.linspace(0, duration, len(samples))
+        duration = len(samples) / sr if sr > 0 else 0
+        t = np.linspace(0, duration, len(samples))
 
-    result['stats'] = {
-        'Sample Rate': f'{sr:.2f} Hz',
-        'Num Samples': len(samples),
-        'Duration': f'{duration:.3f} s',
-        'Min Value': f'{samples.min():.4f}',
-        'Max Value': f'{samples.max():.4f}',
-        'Mean': f'{samples.mean():.6f}',
-        'Std Dev': f'{samples.std():.6f}',
-        'RMS': f'{np.sqrt(np.mean(samples**2)):.6f}',
-    }
+        result['stats'] = {
+            'Sample Rate': f'{sr:.2f} Hz',
+            'Num Samples': len(samples),
+            'Duration': f'{duration:.3f} s',
+            'Min Value': f'{samples.min():.4f}',
+            'Max Value': f'{samples.max():.4f}',
+            'Mean': f'{samples.mean():.6f}',
+            'Std Dev': f'{samples.std():.6f}',
+            'RMS': f'{np.sqrt(np.mean(samples**2)):.6f}',
+        }
 
-    # Waveform
-    fig, ax = plt.subplots(figsize=(10, 2.5))
-    ax.plot(t, samples, color='#cba6f7', linewidth=0.5)
-    ax.set_xlabel('Time (s)', color='#cdd6f4')
-    ax.set_ylabel('Amplitude', color='#cdd6f4')
-    ax.set_title(f'Waveform — {filename} ({result.get("sensor_used", "audio")})', color='#cdd6f4')
-    ax.tick_params(colors='#cdd6f4')
-    for spine in ax.spines.values():
-        spine.set_color('#313244')
-    fig.patch.set_facecolor('#1e1e2e')
-    ax.set_facecolor('#181825')
-    result['waveform_img'] = _b64_figure(fig)
-    plt.close(fig)
-
-    # FFT
-    if len(samples) > 1:
-        fft_vals = np.abs(np.fft.rfft(samples))
-        fft_freqs = np.fft.rfftfreq(len(samples), d=1.0 / sr) if sr > 0 else np.arange(len(fft_vals))
-        fig2, ax2 = plt.subplots(figsize=(10, 2.5))
-        ax2.semilogy(fft_freqs, fft_vals + 1e-12, color='#f38ba8', linewidth=0.8)
-        ax2.set_xlabel('Frequency (Hz)', color='#cdd6f4')
-        ax2.set_ylabel('Magnitude', color='#cdd6f4')
-        ax2.set_title('FFT Spectrum', color='#cdd6f4')
-        ax2.tick_params(colors='#cdd6f4')
-        for spine in ax2.spines.values():
+        # Waveform
+        fig, ax = plt.subplots(figsize=(10, 2.5))
+        ax.plot(t, samples, color='#cba6f7', linewidth=0.5)
+        ax.set_xlabel('Time (s)', color='#cdd6f4')
+        ax.set_ylabel('Amplitude', color='#cdd6f4')
+        ax.set_title(f'Waveform — {filename} ({result.get("sensor_used", "audio")})', color='#cdd6f4')
+        ax.tick_params(colors='#cdd6f4')
+        for spine in ax.spines.values():
             spine.set_color('#313244')
-        fig2.patch.set_facecolor('#1e1e2e')
-        ax2.set_facecolor('#181825')
-        result['fft_img'] = _b64_figure(fig2)
-        plt.close(fig2)
+        fig.patch.set_facecolor('#1e1e2e')
+        ax.set_facecolor('#181825')
+        result['waveform_img'] = _b64_figure(fig)
+        plt.close(fig)
 
-        # Spectrogram
-        if len(samples) >= 256 and sr > 0:
-            fig3, ax3 = plt.subplots(figsize=(10, 3))
-            f, tt, Sxx = scipy_signal.spectrogram(samples, fs=sr, nperseg=min(256, len(samples) // 4))
-            ax3.pcolormesh(tt, f, 10 * np.log10(Sxx + 1e-12), shading='gouraud', cmap='magma')
-            ax3.set_ylabel('Frequency (Hz)', color='#cdd6f4')
-            ax3.set_xlabel('Time (s)', color='#cdd6f4')
-            ax3.set_title('Spectrogram', color='#cdd6f4')
-            ax3.tick_params(colors='#cdd6f4')
-            for spine in ax3.spines.values():
+        # FFT
+        if len(samples) > 1:
+            fft_vals = np.abs(np.fft.rfft(samples))
+            fft_freqs = np.fft.rfftfreq(len(samples), d=1.0 / sr) if sr > 0 else np.arange(len(fft_vals))
+            fig2, ax2 = plt.subplots(figsize=(10, 2.5))
+            ax2.semilogy(fft_freqs, fft_vals + 1e-12, color='#f38ba8', linewidth=0.8)
+            ax2.set_xlabel('Frequency (Hz)', color='#cdd6f4')
+            ax2.set_ylabel('Magnitude', color='#cdd6f4')
+            ax2.set_title('FFT Spectrum', color='#cdd6f4')
+            ax2.tick_params(colors='#cdd6f4')
+            for spine in ax2.spines.values():
                 spine.set_color('#313244')
-            fig3.patch.set_facecolor('#1e1e2e')
-            ax3.set_facecolor('#181825')
-            result['spectrogram_img'] = _b64_figure(fig3)
-            plt.close(fig3)
+            fig2.patch.set_facecolor('#1e1e2e')
+            ax2.set_facecolor('#181825')
+            result['fft_img'] = _b64_figure(fig2)
+            plt.close(fig2)
 
-        peak_idx = np.argmax(fft_vals)
-        result['peak_freq'] = f'{fft_freqs[peak_idx]:.2f} Hz'
+            # Spectrogram
+            if len(samples) >= 256 and sr > 0:
+                fig3, ax3 = plt.subplots(figsize=(10, 3))
+                f, tt, Sxx = scipy_signal.spectrogram(samples, fs=sr, nperseg=min(256, len(samples) // 4))
+                ax3.pcolormesh(tt, f, 10 * np.log10(Sxx + 1e-12), shading='gouraud', cmap='magma')
+                ax3.set_ylabel('Frequency (Hz)', color='#cdd6f4')
+                ax3.set_xlabel('Time (s)', color='#cdd6f4')
+                ax3.set_title('Spectrogram', color='#cdd6f4')
+                ax3.tick_params(colors='#cdd6f4')
+                for spine in ax3.spines.values():
+                    spine.set_color('#313244')
+                fig3.patch.set_facecolor('#1e1e2e')
+                ax3.set_facecolor('#181825')
+                result['spectrogram_img'] = _b64_figure(fig3)
+                plt.close(fig3)
+
+            peak_idx = np.argmax(fft_vals)
+            result['peak_freq'] = f'{fft_freqs[peak_idx]:.2f} Hz'
+
+    # Generate Cross-Sensor Heatmap
+    try:
+        from viewer.ml_integration import extract_sensor_data_for_ml
+        from viewer.analytics import AdvancedAnalytics
+        sensor_data = extract_sensor_data_for_ml(p)
+        correlation_data = {}
+        for sensor_name, data in sensor_data.items():
+            if isinstance(data, dict):
+                if 'x' in data: correlation_data[f'{sensor_name}_x'] = data['x']
+                if 'y' in data: correlation_data[f'{sensor_name}_y'] = data['y']
+                if 'z' in data: correlation_data[f'{sensor_name}_z'] = data['z']
+                if 'samples' in data: correlation_data[sensor_name] = data['samples']
+            else:
+                correlation_data[sensor_name] = data
+        analytics = AdvancedAnalytics()
+        corr_results = analytics.correlation_analyzer.calculate_correlation(correlation_data)
+        if 'error' not in corr_results:
+            heatmap = analytics.correlation_analyzer.generate_heatmap(corr_results)
+            result['heatmap_img'] = heatmap
+    except Exception as e:
+        result['heatmap_error'] = str(e)
 
     return result
+
+
+@csrf_exempt
+@require_POST
+def bulk_process_directory(request):
+    """Process all RedVox files in a directory."""
+    try:
+        data = json.loads(request.body)
+        directory = data.get('directory')
+        recursive = data.get('recursive', True)
+        export_format = data.get('export_format', 'json')
+        
+        if not directory:
+            return JsonResponse({'error': 'Directory path required'}, status=400)
+        
+        processor = BulkProcessor(directory)
+        results = processor.process_directory(recursive)
+        
+        # Handle different export formats
+        if export_format == 'csv':
+            output_dir = Path(settings.MEDIA_ROOT) / 'bulk_exports'
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_file = output_dir / f'bulk_export_{uuid.uuid4().hex[:8]}.csv'
+            processor.export_to_csv(str(output_file))
+            return JsonResponse({
+                'success': True,
+                'export_url': f"/media/bulk_exports/{output_file.name}",
+                'stats': {
+                    'total_files': results['total_files'],
+                    'successful': results['successful'],
+                    'failed': results['failed']
+                }
+            })
+        elif export_format == 'excel':
+            output_dir = Path(settings.MEDIA_ROOT) / 'bulk_exports'
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_file = output_dir / f'bulk_export_{uuid.uuid4().hex[:8]}.xlsx'
+            processor.export_to_excel(str(output_file))
+            return JsonResponse({
+                'success': True,
+                'export_url': f"/media/bulk_exports/{output_file.name}",
+                'stats': {
+                    'total_files': results['total_files'],
+                    'successful': results['successful'],
+                    'failed': results['failed']
+                }
+            })
+        elif export_format == 'parquet':
+            output_dir = Path(settings.MEDIA_ROOT) / 'bulk_exports'
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_file = output_dir / f'bulk_export_{uuid.uuid4().hex[:8]}.parquet'
+            processor.export_to_parquet(str(output_file))
+            return JsonResponse({
+                'success': True,
+                'export_url': f"/media/bulk_exports/{output_file.name}",
+                'stats': {
+                    'total_files': results['total_files'],
+                    'successful': results['successful'],
+                    'failed': results['failed']
+                }
+            })
+        else:
+            return JsonResponse({
+                'success': True,
+                'results': results['results'],
+                'errors': results['errors'],
+                'stats': {
+                    'total_files': results['total_files'],
+                    'successful': results['successful'],
+                    'failed': results['failed']
+                }
+            })
+            
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@require_POST
+def classify_sensors(request):
+    """Classify sensor data using ML models and event classification."""
+    try:
+        data = json.loads(request.body)
+        file_path = data.get('file_path')
+        
+        if not file_path:
+            return JsonResponse({'error': 'File path required'}, status=400)
+        
+        # Load RedVox packet
+        packet = _read_rdvxm(file_path)
+        
+        # Extract sensor data for ML
+        sensor_data = extract_sensor_data_for_ml(packet)
+        
+        # Initialize classifiers
+        classifier = MultiSensorClassifier()
+        event_classifier = SensorEventClassifier()
+        
+        # Classify all available sensors using ML models
+        classification_results = classifier.classify_all_sensors(sensor_data)
+        
+        # Get sample rates for event classification
+        sensors = packet.get_sensors()
+        sample_rates = {}
+        
+        if sensors.has_audio():
+            sample_rates['audio'] = sensors.get_audio().get_sample_rate()
+        if sensors.has_accelerometer():
+            sample_rates['accelerometer'] = sensors.get_accelerometer().get_sample_rate()
+        if sensors.has_gyroscope():
+            sample_rates['gyroscope'] = sensors.get_gyroscope().get_sample_rate()
+        if sensors.has_magnetometer():
+            sample_rates['magnetometer'] = sensors.get_magnetometer().get_sample_rate()
+        if sensors.has_light():
+            sample_rates['light'] = sensors.get_light().get_sample_rate()
+        if sensors.has_pressure():
+            sample_rates['pressure'] = sensors.get_pressure().get_sample_rate()
+        if sensors.has_location():
+            sample_rates['location'] = sensors.get_location().get_sample_rate()
+        
+        # Classify events for all available sensors
+        event_classification_results = event_classifier.classify_all_sensor_events(sensor_data, sample_rates)
+        
+        return JsonResponse({
+            'success': True,
+            'classifications': classification_results,
+            'event_classifications': event_classification_results,
+            'sensors_available': list(sensor_data.keys())
+        })
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@require_POST
+def generate_dashboard_report(request):
+    """Generate synthesized dashboard report with actionable insights."""
+    try:
+        data = json.loads(request.body)
+        file_path = data.get('file_path')
+        export_format = data.get('export_format', 'json')
+        
+        if not file_path:
+            return JsonResponse({'error': 'File path required'}, status=400)
+        
+        # Load RedVox packet
+        packet = _read_rdvxm(file_path)
+        
+        # Extract sensor data
+        sensor_data = extract_sensor_data_for_ml(packet)
+        
+        # Generate metadata
+        station_info = packet.get_station_information()
+        metadata = {
+            'start_time': packet.get_timing_information().get_packet_start_mach(),
+            'end_time': packet.get_timing_information().get_packet_end_mach(),
+            'duration': 'auto',
+            'station_id': station_info.get_id(),
+            'device': f"{station_info.get_make()} {station_info.get_model()}"
+        }
+        
+        # Generate report
+        report_generator = ReportGenerator()
+        report = report_generator.generate_dashboard_report(sensor_data, metadata)
+        
+        # Export report
+        output_dir = Path(settings.MEDIA_ROOT) / 'reports'
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        if export_format == 'json':
+            output_file = output_dir / f"{report.report_id}.json"
+            report_generator.export_report_to_json(report, str(output_file))
+            return JsonResponse({
+                'success': True,
+                'download_url': f"/media/reports/{output_file.name}",
+                'report_id': report.report_id
+            })
+        elif export_format == 'html':
+            output_file = output_dir / f"{report.report_id}.html"
+            report_generator.export_report_to_html(report, str(output_file))
+            return JsonResponse({
+                'success': True,
+                'download_url': f"/media/reports/{output_file.name}",
+                'report_id': report.report_id
+            })
+        elif export_format == 'pdf':
+            output_file = output_dir / f"{report.report_id}.pdf"
+            pdf_success = report_generator.export_report_to_pdf(report, str(output_file))
+            if pdf_success:
+                return JsonResponse({
+                    'success': True,
+                    'download_url': f"/media/reports/{output_file.name}",
+                    'report_id': report.report_id
+                })
+            else:
+                return JsonResponse({
+                    'error': 'PDF generation failed. Install reportlab: pip install reportlab'
+                }, status=500)
+        else:
+            return JsonResponse({
+                'success': True,
+                'report': report.__dict__
+            })
+            
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@require_POST
+def advanced_ml_classification(request):
+    """Advanced ML classification using multiple models."""
+    try:
+        data = json.loads(request.body)
+        file_path = data.get('file_path')
+        classification_type = data.get('classification_type', 'auto')
+        
+        if not file_path:
+            return JsonResponse({'error': 'File path required'}, status=400)
+        
+        # Load RedVox packet
+        packet = _read_rdvxm(file_path)
+        
+        # Extract sensor data
+        sensor_data = extract_sensor_data_for_ml(packet)
+        
+        # Initialize advanced ML framework
+        ml_framework = RedVoxMLFramework()
+        
+        # Route to appropriate classification
+        if classification_type == 'audio':
+            audio_data = sensor_data.get('audio', {}).get('samples', np.array([]))
+            sample_rate = sensor_data.get('audio', {}).get('sample_rate', 16000)
+            results = ml_framework.classify_audio(audio_data, sample_rate)
+        elif classification_type == 'motion':
+            motion_data = {
+                'accelerometer': sensor_data.get('accelerometer', {}).get('x', np.array([])),
+                'gyroscope': sensor_data.get('gyroscope', {}).get('x', np.array([]))
+            }
+            results = ml_framework.classify_motion(motion_data)
+        elif classification_type == 'environmental':
+            env_data = {
+                'pressure': sensor_data.get('pressure', {}).get('samples', np.array([])),
+                'temperature': sensor_data.get('temperature', {}).get('samples', np.array([])),
+                'humidity': sensor_data.get('humidity', {}).get('samples', np.array([]))
+            }
+            results = ml_framework.classify_environmental(env_data)
+        elif classification_type == 'multi_sensor':
+            results = ml_framework.multi_sensor_fusion(sensor_data)
+        else:
+            # Auto-detect and classify all available
+            results = {}
+            if 'audio' in sensor_data:
+                audio_data = sensor_data['audio']
+                results['audio'] = ml_framework.classify_audio(
+                    audio_data['samples'], audio_data['sample_rate']
+                )
+            if 'accelerometer' in sensor_data and 'gyroscope' in sensor_data:
+                results['motion'] = ml_framework.classify_motion(sensor_data)
+            if 'pressure' in sensor_data or 'temperature' in sensor_data:
+                results['environmental'] = ml_framework.classify_environmental(sensor_data)
+        
+        # List available models
+        available_models = ml_framework.list_models()
+        
+        return JsonResponse({
+            'success': True,
+            'classification_results': results,
+            'available_models': available_models,
+            'classification_type': classification_type
+        })
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@require_POST
+def generate_scientific_video(request):
+    """Generate synchronized multi-track scientific video from RedVox data."""
+    try:
+        data = json.loads(request.body)
+        file_path = data.get('file_path')
+        include_audio = data.get('include_audio', True)
+        include_accelerometer = data.get('include_accelerometer', True)
+        include_location = data.get('include_location', True)
+        fps = data.get('fps', 30)
+        
+        if not file_path:
+            return JsonResponse({'error': 'File path required'}, status=400)
+        
+        # Load RedVox packet
+        packet = _read_rdvxm(file_path)
+        
+        # Generate output path
+        output_dir = Path(settings.MEDIA_ROOT) / 'videos'
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_file = output_dir / f"scientific_video_{uuid.uuid4().hex[:8]}.mp4"
+        
+        # Generate video
+        video_path = generate_scientific_video(
+            packet,
+            str(output_file),
+            include_audio=include_audio,
+            include_accelerometer=include_accelerometer,
+            include_location=include_location,
+            fps=fps
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'video_url': f"/media/videos/{output_file.name}",
+            'video_path': video_path
+        })
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@require_POST
+def generate_3d_visualization(request):
+    """Generate 3D spatial visualizations for sensor data."""
+    try:
+        data = json.loads(request.body)
+        file_path = data.get('file_path')
+        
+        if not file_path:
+            return JsonResponse({'error': 'File path required'}, status=400)
+        
+        # Load RedVox packet
+        packet = _read_rdvxm(file_path)
+        
+        # Generate 3D visualizations
+        visualizations = generate_3d_visualizations(packet)
+        
+        return JsonResponse({
+            'success': True,
+            'visualizations': visualizations,
+            'available_visualizations': list(visualizations.keys())
+        })
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@require_POST
+def advanced_analytics(request):
+    """Perform advanced analytics on RedVox packet data."""
+    try:
+        data = json.loads(request.body)
+        file_path = data.get('file_path')
+        analysis_type = data.get('analysis_type', 'all')
+        
+        if not file_path:
+            return JsonResponse({'error': 'File path required'}, status=400)
+        
+        # Load RedVox packet
+        packet = _read_rdvxm(file_path)
+        
+        # Initialize analytics
+        analytics = AdvancedAnalytics()
+        
+        if analysis_type == 'all':
+            results = analytics.analyze_packet(packet)
+        elif analysis_type == 'correlation':
+            from viewer.ml_integration import extract_sensor_data_for_ml
+            sensor_data = extract_sensor_data_for_ml(packet)
+            
+            # Prepare correlation data
+            correlation_data = {}
+            for sensor_name, data in sensor_data.items():
+                if isinstance(data, dict):
+                    if 'x' in data:
+                        correlation_data[f'{sensor_name}_x'] = data['x']
+                    if 'y' in data:
+                        correlation_data[f'{sensor_name}_y'] = data['y']
+                    if 'z' in data:
+                        correlation_data[f'{sensor_name}_z'] = data['z']
+                    if 'samples' in data:
+                        correlation_data[sensor_name] = data['samples']
+                else:
+                    correlation_data[sensor_name] = data
+            
+            corr_results = analytics.correlation_analyzer.calculate_correlation(correlation_data)
+            if 'error' not in corr_results:
+                heatmap = analytics.correlation_analyzer.generate_heatmap(corr_results)
+                strong_corrs = analytics.correlation_analyzer.get_strong_correlations()
+                results = {
+                    'correlation_analysis': {
+                        'matrix': corr_results['correlation_matrix'].tolist(),
+                        'sensor_names': corr_results['sensor_names'],
+                        'method': corr_results['method'],
+                        'heatmap': heatmap,
+                        'strong_correlations': strong_corrs
+                    }
+                }
+            else:
+                results = {'error': corr_results['error']}
+        elif analysis_type == 'drift':
+            from viewer.ml_integration import extract_sensor_data_for_ml
+            sensor_data = extract_sensor_data_for_ml(packet)
+            
+            results = {'drift_analysis': {}}
+            for sensor_name, data in sensor_data.items():
+                if isinstance(data, dict):
+                    if 'samples' in data:
+                        drift_results = analytics.drift_detector.detect_drift(data['samples'])
+                        results['drift_analysis'][sensor_name] = drift_results
+                else:
+                    drift_results = analytics.drift_detector.detect_drift(data)
+                    results['drift_analysis'][sensor_name] = drift_results
+        else:
+            return JsonResponse({'error': f'Unknown analysis type: {analysis_type}'}, status=400)
+        
+        return JsonResponse({
+            'success': True,
+            'analysis_results': results,
+            'analysis_type': analysis_type
+        })
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+def get_device_info(request):
+    """Get available computing devices and their information."""
+    try:
+        device_manager = get_device_manager()
+        
+        return JsonResponse({
+            'success': True,
+            'device_info': device_manager.get_device_info(),
+            'available_devices': device_manager.get_available_devices(),
+            'current_device': device_manager.get_current_device(),
+            'optimal_device': device_manager.get_optimal_device(),
+            'memory_info': device_manager.get_memory_info()
+        })
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 def data_window(request):
@@ -1190,3 +1928,169 @@ def api_info(request):
             'data-req', 'data-req-report', 'cloud-download',
         ],
     })
+
+
+def map_dashboard(request):
+    import folium
+    from folium.plugins import TimestampedGeoJson
+    from datetime import datetime, timedelta
+
+    m = folium.Map(location=[19.43, -155.23], zoom_start=8, tiles='CartoDB positron')
+
+    # Event color coding mapping for 93 event classes (using categories for simplicity here)
+    event_colors = {
+        'Explosion': 'orange',
+        'Helicopter': 'red',
+        'Speech': 'blue',
+        'Earthquake': 'purple',
+        'Vehicle': 'green',
+        'Default': 'gray'
+    }
+
+    # Mock some data for demonstration of color coding and time-lapse
+    base_time = datetime.now() - timedelta(days=1)
+    
+    features = []
+    events = [
+        {"type": "Explosion", "lat": 19.42, "lon": -155.28, "time": base_time},
+        {"type": "Helicopter", "lat": 19.5, "lon": -155.1, "time": base_time + timedelta(hours=2)},
+        {"type": "Speech", "lat": 19.45, "lon": -155.2, "time": base_time + timedelta(hours=4)},
+        {"type": "Earthquake", "lat": 19.3, "lon": -155.4, "time": base_time + timedelta(hours=6)},
+    ]
+
+    for i, event in enumerate(events):
+        color = event_colors.get(event['type'], event_colors['Default'])
+        
+        # Add normal markers for color coding
+        folium.Marker(
+            location=[event['lat'], event['lon']],
+            popup=f"{event['type']} at {event['time'].strftime('%H:%M:%S')}",
+            icon=folium.Icon(color=color, icon='info-sign')
+        ).add_to(m)
+
+        # Add feature for TimestampedGeoJson (Time-Lapse Analysis)
+        features.append({
+            'type': 'Feature',
+            'geometry': {
+                'type': 'Point',
+                'coordinates': [event['lon'], event['lat']],
+            },
+            'properties': {
+                'time': event['time'].isoformat(),
+                'style': {'color': color},
+                'icon': 'circle',
+                'iconstyle': {
+                    'fillColor': color,
+                    'fillOpacity': 0.8,
+                    'stroke': 'true',
+                    'radius': 8
+                },
+                'popup': f"<b>{event['type']}</b>"
+            }
+        })
+
+    # Add Time-lapse Analysis layer
+    TimestampedGeoJson({
+        'type': 'FeatureCollection',
+        'features': features
+    }, period='PT1H', add_last_point=True, auto_play=False, loop=False).add_to(m)
+
+    # Add KML/GMZ layer support (simulated integration hook for Phase 1)
+    kml_import_active = request.GET.get('kml', 'false') == 'true'
+    if kml_import_active:
+        import json
+        # Simulated KML Polygon overlay converted to GeoJSON for rendering
+        kml_geojson = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [-155.3, 19.3], [-155.1, 19.3],
+                        [-155.1, 19.5], [-155.3, 19.5], [-155.3, 19.3]
+                    ]]
+                },
+                "properties": {"name": "KML Import Region", "style": {"color": "red", "weight": 2}}
+            }]
+        }
+        folium.GeoJson(
+            kml_geojson,
+            name="Imported KML/GMZ",
+            style_function=lambda feature: feature['properties']['style']
+        ).add_to(m)
+        folium.LayerControl().add_to(m)
+
+    return render(request, 'viewer/map.html', {
+        'map_html': m._repr_html_(),
+        'event_colors': event_colors
+    })
+
+
+from django.http import FileResponse, JsonResponse
+import os
+import uuid
+
+@csrf_exempt
+def export_pdf_report(request):
+    try:
+        from viewer.report_generator import ReportGenerator, DashboardReport
+        from viewer.pdf_export import export_report_to_pdf
+        
+        # Create a dummy report or process real data
+        report = DashboardReport(
+            report_id=f'RPT-{uuid.uuid4().hex[:8].upper()}',
+            generated_at=datetime.now().isoformat(),
+            data_period={'start': 'N/A', 'end': 'N/A', 'station_id': 'DUMMY_STATION'},
+            sensor_insights=[],
+            environmental_insights=None,
+            motion_insights=None,
+            health_insights=None,
+            actionable_recommendations=['Review sensor data for anomalies.', 'Deploy additional sensors.'],
+            key_metrics={'Total Events': 42, 'Anomalies': 3},
+            visualizations={},
+            executive_summary='This is a generated PDF report for RedVox data analysis.'
+        )
+        
+        out_dir = Path(settings.MEDIA_ROOT) / 'reports'
+        out_dir.mkdir(parents=True, exist_ok=True)
+        pdf_path = out_dir / f'report_{report.report_id}.pdf'
+        
+        success = export_report_to_pdf(ReportGenerator(), report, str(pdf_path))
+        if success and os.path.exists(pdf_path):
+            return FileResponse(open(pdf_path, 'rb'), content_type='application/pdf')
+        else:
+            return JsonResponse({'error': 'Failed to generate PDF'}, status=500)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+from django.utils import timezone
+from datetime import timedelta
+from .models import DashboardShareToken
+from django.shortcuts import get_object_or_404, redirect
+
+@csrf_exempt
+def create_dashboard_share(request):
+    try:
+        if request.method == 'POST':
+            data = json.loads(request.body)
+        else:
+            data = {}
+        # Create token expiring in 7 days
+        token = DashboardShareToken.objects.create(
+            expires_at=timezone.now() + timedelta(days=7),
+            state=data
+        )
+        share_url = f'/shared/{token.token}/'
+        return JsonResponse({'status': 'success', 'share_url': share_url, 'token': str(token.token)})
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
+
+def view_shared_dashboard(request, token_id):
+    token = get_object_or_404(DashboardShareToken, token=token_id)
+    if not token.is_valid:
+        return render(request, 'viewer/error.html', {'message': 'This share link has expired.'})
+    
+    # In a real app, use token.state to filter the dashboard data
+    return dashboard(request)

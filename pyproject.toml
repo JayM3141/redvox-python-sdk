@@ -19,6 +19,7 @@ dependencies = [
     "fastkml==0.12",
     "lxml==5.2.2",
     "lz4==4.3.3",
+    "folium>=0.16.0",
     "numpy==1.26.4",
     "pandas==2.2.2",
     "protobuf==4.25.3",
@@ -31,6 +32,7 @@ dependencies = [
     "tomli==2.0.1",
     "tomli-w==1.0.0",
     "websocket-client==1.8.0",
+    "reportlab>=3.6.0",
 ]
 
 [project.optional-dependencies]

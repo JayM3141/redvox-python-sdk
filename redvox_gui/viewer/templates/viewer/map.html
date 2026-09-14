@@ -1,0 +1,57 @@
+{% extends 'viewer/base.html' %}
+{% block title %}Interactive Map — RedVox SDK GUI{% endblock %}
+{% block nav_map %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h3 class="fw-bold mb-0"><i class="bi bi-geo-alt-fill me-2 text-primary"></i>Interactive Map</h3>
+    <p class="text-muted mb-0 small">Geospatial visualization of RedVox station deployments and events.</p>
+</div>
+
+<div class="row g-3">
+    <div class="col-lg-9">
+        <div class="card">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                <span>Station Map & Time-Lapse</span>
+                <span class="badge bg-secondary">Folium/Leaflet</span>
+            </div>
+            <div class="card-body p-0">
+                <!-- Folium Map iframe/html -->
+                {{ map_html|safe }}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-3">
+        <div class="card mb-3">
+            <div class="card-header bg-dark text-white">Event Colors</div>
+            <div class="card-body">
+                {% if event_colors %}
+                <ul class="list-group list-group-flush">
+                    {% for event, color in event_colors.items %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        {{ event }}
+                        <span class="badge rounded-pill" style="background-color: {{ color }};">&nbsp;&nbsp;&nbsp;</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header bg-dark text-white">GIS Tools</div>
+            <div class="card-body">
+                <form action="?kml=true" method="get">
+                    <div class="mb-3">
+                        <label class="form-label">Import KML/GMZ</label>
+                        <input type="file" class="form-control form-control-sm" accept=".kml,.gmz" disabled>
+                        <div class="form-text">Server-side processing of KML files.</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm w-100" name="kml" value="true">Enable KML Layer</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
