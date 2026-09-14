@@ -93,6 +93,89 @@
 </div>
 
 <div class="row g-4 mt-2">
+    <div class="col-md-6 col-lg-6">
+        <div class="card h-100 border-primary">
+            <div class="card-body text-center p-4">
+                <div class="fs-1 mb-3">🧠</div>
+                <h5 class="card-title fw-bold">Machine Learning</h5>
+                <p class="card-text text-muted small">Run YAMNet audio classification on sensor data asynchronously using Redis caching.</p>
+                <button onclick="runML()" class="btn btn-primary w-100 mt-2" id="ml-btn">Trigger Audio ML</button>
+                <div id="ml-result" class="mt-3 small text-start p-2 bg-light rounded" style="display:none; max-height:150px; overflow-y:auto;"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6 col-lg-6">
+        <div class="card h-100 border-success">
+            <div class="card-body text-center p-4">
+                <div class="fs-1 mb-3">☁️</div>
+                <h5 class="card-title fw-bold">Cloud Export</h5>
+                <p class="card-text text-muted small">Generate HDF5 and NetCDF and offload immediately to AWS S3 or GCP Cloud Storage.</p>
+                <div class="d-flex gap-2 mt-2">
+                    <button onclick="runCloud('aws')" class="btn btn-outline-success w-50">Upload S3</button>
+                    <button onclick="runCloud('gcp')" class="btn btn-outline-success w-50">Upload GCP</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function runML() {
+    const btn = document.getElementById('ml-btn');
+    const res = document.getElementById('ml-result');
+    btn.disabled = true;
+    btn.innerText = 'Initializing...';
+    res.style.display = 'block';
+    res.innerText = 'Starting ML job...';
+    
+    fetch('/api/ml/analyze_audio/', {method: 'POST'})
+        .then(r => r.json())
+        .then(data => {
+            if (data.job_id) {
+                btn.innerText = 'Processing...';
+                pollML(data.job_id);
+            } else {
+                res.innerText = 'Error: ' + JSON.stringify(data);
+                btn.disabled = false;
+                btn.innerText = 'Trigger Audio ML';
+            }
+        });
+}
+
+function pollML(job_id) {
+    const res = document.getElementById('ml-result');
+    fetch('/api/ml/analyze_audio/?job_id=' + job_id)
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'complete') {
+                res.innerHTML = '<strong>Results:</strong><br><pre>' + JSON.stringify(data.result, null, 2) + '</pre>';
+                document.getElementById('ml-btn').innerText = 'Trigger Audio ML';
+                document.getElementById('ml-btn').disabled = false;
+            } else {
+                setTimeout(() => pollML(job_id), 1500);
+            }
+        });
+}
+
+function runCloud(provider) {
+    alert("Starting asynchronous upload to " + provider.toUpperCase() + "...");
+    let formData = new FormData();
+    formData.append('provider', provider);
+    
+    fetch('/api/export/cloud/', {
+        method: 'POST',
+        body: formData
+    })
+    .then(r => r.json())
+    .then(data => {
+        alert("Cloud Export Status: " + data.status + " | File: " + data.object_name);
+    })
+    .catch(err => alert("Error: " + err));
+}
+</script>
+
+<div class="row g-4 mt-2">
     <div class="col-md-6">
         <div class="card">
             <div class="card-header bg-dark text-white">

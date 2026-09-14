@@ -51,17 +51,17 @@ class HDF5Exporter:
                 
                 # Add packet metadata
                 station_info = packet.get_station_information()
-                metadata_group.attrs['station_id'] = station_info.get_id()
-                metadata_group.attrs['uuid'] = station_info.get_uuid()
-                metadata_group.attrs['make'] = station_info.get_make()
-                metadata_group.attrs['model'] = station_info.get_model()
-                metadata_group.attrs['os'] = station_info.get_os()
-                metadata_group.attrs['os_version'] = station_info.get_os_version()
-                metadata_group.attrs['app_version'] = station_info.get_app_version()
+                metadata_group.attrs['station_id'] = str(station_info.get_id() or "")
+                metadata_group.attrs['uuid'] = str(station_info.get_uuid() or "")
+                metadata_group.attrs['make'] = str(station_info.get_make() or "")
+                metadata_group.attrs['model'] = str(station_info.get_model() or "")
+                metadata_group.attrs['os'] = str(station_info.get_os() or "")
+                metadata_group.attrs['os_version'] = str(station_info.get_os_version() or "")
+                metadata_group.attrs['app_version'] = str(station_info.get_app_version() or "")
                 
                 timing_info = packet.get_timing_information()
-                metadata_group.attrs['packet_start'] = timing_info.get_packet_start_mach()
-                metadata_group.attrs['packet_end'] = timing_info.get_packet_end_mach()
+                metadata_group.attrs['packet_start'] = float(getattr(timing_info, 'get_packet_start_mach_timestamp', lambda: 0.0)())
+                metadata_group.attrs['packet_end'] = float(getattr(timing_info, 'get_packet_end_mach_timestamp', lambda: 0.0)())
                 metadata_group.attrs['export_timestamp'] = datetime.now().isoformat()
                 
                 # Create sensors group

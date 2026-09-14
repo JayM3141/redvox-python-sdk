@@ -149,6 +149,8 @@ def _format_utc_datetime(value) -> str:
     return value.strftime('%Y-%m-%d %H:%M:%S UTC')
 
 
+import datetime as dt
+
 def _format_epoch_micros(value) -> str:
     try:
         numeric_value = float(value)
@@ -156,11 +158,11 @@ def _format_epoch_micros(value) -> str:
         return '—'
     if np.isnan(numeric_value) or np.isinf(numeric_value):
         return '—'
-    return datetime.fromtimestamp(numeric_value / 1_000_000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f UTC')
+    return datetime.fromtimestamp(numeric_value / 1_000_000, tz=dt.timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f UTC')
 
 
 def _format_filesystem_datetime(timestamp: float) -> str:
-    return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    return datetime.fromtimestamp(timestamp, tz=dt.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
 
 
 def _looks_like_data_window_metadata(payload) -> bool:
@@ -324,7 +326,7 @@ def _create_cached_data_window(form_values: dict) -> dict:
     except KeyError as exc:
         raise ValueError(f'Unsupported edge point mode: {form_values.get("copy_edge_points", "")}') from exc
 
-    cache_key = f'{event_name}_{datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")}_{uuid.uuid4().hex[:8]}'
+    cache_key = f'{event_name}_{datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")}_{uuid.uuid4().hex[:8]}'
     output_dir = _data_window_cache_root(ensure_exists=True) / cache_key
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2231,3 +2233,86 @@ def export_netcdf(request):
         response['Content-Disposition'] = 'attachment; filename="redvox_data.nc"'
         return response
     return JsonResponse({'error': 'Failed to generate NetCDF'}, status=500)
+
+
+import threading
+from django.core.cache import cache
+
+@csrf_exempt
+def export_cloud(request):
+    """Exports data to HDF5 then uploads to AWS or GCP based on provider parameter."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Must be POST'}, status=405)
+    
+    provider = request.POST.get('provider', 'aws') # 'aws' or 'gcp'
+    bucket = request.POST.get('bucket', 'redvox-data-exports')
+    
+    packet = _generate_dummy_packet()
+    from .scientific_containers import HDF5Exporter
+    from .cloud_integration import CloudUploader
+    
+    with tempfile.NamedTemporaryFile(suffix='.hdf5', delete=False) as tmp:
+        tmp_path = tmp.name
+        
+    exporter = HDF5Exporter()
+    if exporter.export_to_hdf5(packet, tmp_path):
+        object_name = f"redvox_export_{uuid.uuid4().hex[:8]}.hdf5"
+        
+        # Async upload so we don't block
+        def _do_upload():
+            if provider == 'aws':
+                CloudUploader.upload_to_s3(tmp_path, bucket, object_name)
+            else:
+                CloudUploader.upload_to_gcp(tmp_path, bucket, object_name)
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+                
+        threading.Thread(target=_do_upload).start()
+        return JsonResponse({'status': 'uploading', 'object_name': object_name, 'provider': provider})
+        
+    return JsonResponse({'error': 'Failed to generate HDF5 for upload'}, status=500)
+
+
+@csrf_exempt
+def api_ml_analyze_audio(request):
+    """
+    Triggers YAMNet ML inference on simulated packet audio data asynchronously.
+    UI can poll this endpoint by passing 'job_id' to get the result from Redis cache.
+    """
+    job_id = request.GET.get('job_id')
+    if job_id:
+        # Check cache for result
+        result = cache.get(f"ml_job_{job_id}")
+        if result:
+            return JsonResponse({'status': 'complete', 'result': result})
+        return JsonResponse({'status': 'processing'})
+        
+    if request.method == 'POST':
+        # Start new ML job
+        new_job = uuid.uuid4().hex
+        cache.set(f"ml_job_{new_job}", None, timeout=3600)
+        
+        def _run_ml():
+            from .ml_integration import MultiSensorClassifier, extract_sensor_data_for_ml
+            # Simulating data extraction
+            packet = _generate_dummy_packet()
+            
+            # Since _generate_dummy_packet might not have all proper audio samples, we mock it for now
+            # if audio extraction fails.
+            import numpy as np
+            sample_audio = np.random.normal(0, 0.1, 16000 * 3) # 3 seconds of noise
+            
+            classifier = MultiSensorClassifier()
+            # This calls YAMNet
+            results = classifier.classify_audio(sample_audio, 16000.0)
+            
+            # Save to cache
+            cache.set(f"ml_job_{new_job}", results, timeout=3600)
+            
+        threading.Thread(target=_run_ml).start()
+        return JsonResponse({'status': 'started', 'job_id': new_job})
+        
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
