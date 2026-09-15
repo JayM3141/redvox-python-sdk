@@ -1,5 +1,5 @@
-{% extends 'viewer/base.html' %}
-{% block title %}Dashboard — RedVox SDK GUI{% endblock %}
+{% extends "viewer/base.html" %}
+{% block title %}Dashboard | RedVox SDK GUI{% endblock %}
 {% block nav_home %}active{% endblock %}
 {% block sdk_version %}{{ sdk_version }}{% endblock %}
 
@@ -121,41 +121,12 @@
 </div>
 
 <script>
-function runML() {
+async function runML() {
     const btn = document.getElementById('ml-btn');
     const res = document.getElementById('ml-result');
     btn.disabled = true;
-    btn.innerText = 'Initializing...';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
     res.style.display = 'block';
-    res.innerText = 'Starting ML job...';
-    
-    fetch('/api/ml/analyze_audio/', {method: 'POST'})
-        .then(r => r.json())
-        .then(data => {
-            if (data.job_id) {
-                btn.innerText = 'Processing...';
-                pollML(data.job_id);
-            } else {
-                res.innerText = 'Error: ' + JSON.stringify(data);
-                btn.disabled = false;
-                btn.innerText = 'Trigger Audio ML';
-            }
-        });
-}
-
-function pollML(job_id) {
-    const res = document.getElementById('ml-result');
-    fetch('/api/ml/analyze_audio/?job_id=' + job_id)
-        .then(r => r.json())
-        .then(data => {
-            if (data.status === 'complete') {
-                res.innerHTML = '<strong>Results:</strong><br><pre>' + JSON.stringify(data.result, null, 2) + '</pre>';
-                document.getElementById('ml-btn').innerText = 'Trigger Audio ML';
-                document.getElementById('ml-btn').disabled = false;
-            } else {
-                setTimeout(() => pollML(job_id), 1500);
-            }
-        });
 }
 
 function runCloud(provider) {

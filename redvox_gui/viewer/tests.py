@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase, Client
 
 from . import views
 
@@ -325,3 +325,50 @@ class Phase2And3Tests(SimpleTestCase):
         response = self.client.get('/api/export/netcdf/')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['Content-Type'], 'application/x-netcdf')
+
+class Phase6ComprehensiveTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.client = self.client_class()
+        
+    @patch('viewer.views.uuid.uuid4')
+    def test_ml_analyze_endpoint_post(self, mock_uuid):
+        mock_uuid.return_value.hex = 'test-job-id-123'
+        response = self.client.post('/api/ml/analyze_audio/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['job_id'], 'test-job-id-123')
+        
+    def test_ml_analyze_endpoint_get_status(self):
+        response = self.client.get('/api/ml/analyze_audio/?job_id=test-job-id-123')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('status', response.json())
+        
+    @patch('viewer.cloud_integration.CloudUploader')
+    def test_cloud_export_aws(self, MockUploader):
+        response = self.client.post('/api/export/cloud/', {'provider': 'aws', 'bucket': 'test-bucket'})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('object_name', response.json())
+        
+    def test_cloud_export_invalid_provider(self):
+        response = self.client.post('/api/export/cloud/', {'provider': 'invalid'})
+        self.assertEqual(response.status_code, 400)
+        
+    def test_dashboard_share_token_generation(self):
+        response = self.client.post('/api/dashboard/share/', '{}', content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('token', response.json())
+        self.assertIn('share_url', response.json())
+        
+    def test_full_smoke_test(self):
+        """Smoke test hitting all major UI routes."""
+        routes = [
+            '/', '/dashboard/', '/map/', '/inspect/', '/data_window/', 
+            '/converter/', '/validator/', '/cli/', '/analysis/', 
+            '/cloud/', '/samples/'
+        ]
+        for route in routes:
+            with self.subTest(route=route):
+                response = self.client.get(route)
+                # Should not 500. Some might be 302 redirects depending on auth config
+                self.assertIn(response.status_code, [200, 302, 404])
+

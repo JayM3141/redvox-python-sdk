@@ -2126,7 +2126,7 @@ from django.shortcuts import get_object_or_404, redirect
 @csrf_exempt
 def create_dashboard_share(request):
     try:
-        if request.method == 'POST':
+        if request.method == 'POST' and request.body:
             data = json.loads(request.body)
         else:
             data = {}
@@ -2138,7 +2138,9 @@ def create_dashboard_share(request):
         share_url = f'/shared/{token.token}/'
         return JsonResponse({'status': 'success', 'share_url': share_url, 'token': str(token.token)})
     except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=400)
 
 def view_shared_dashboard(request, token_id):
     from django.shortcuts import get_object_or_404
@@ -2245,6 +2247,9 @@ def export_cloud(request):
         return JsonResponse({'error': 'Must be POST'}, status=405)
     
     provider = request.POST.get('provider', 'aws') # 'aws' or 'gcp'
+    if provider not in ['aws', 'gcp']:
+        return JsonResponse({'error': 'Invalid provider'}, status=400)
+        
     bucket = request.POST.get('bucket', 'redvox-data-exports')
     
     packet = _generate_dummy_packet()
